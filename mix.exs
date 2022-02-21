@@ -84,11 +84,9 @@ defmodule EMQXUmbrella.MixProject do
       # dependencies of dependencies; we choose specific refs to match
       # what rebar3 chooses.
       # in conflict by gun and emqtt
-      {:cowlib,
-       github: "ninenines/cowlib", ref: "c6553f8308a2ca5dcd69d845f0a7d098c40c3363", override: true},
+      {:cowlib, "2.8.0", override: true},
       # in conflict by cowboy_swagger and cowboy
-      {:ranch,
-       github: "ninenines/ranch", ref: "a692f44567034dacf5efcaa24a24183788594eb7", override: true},
+      {:ranch, "1.8.0", override: true},
       # in conflict by grpc and eetcd
       {:gpb, "4.11.2", override: true}
     ] ++ umbrella_apps() ++ bcrypt_dep() ++ quicer_dep()

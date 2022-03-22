@@ -75,3 +75,12 @@ t_delayed_message(_) ->
     EmptyKey = mnesia:dirty_all_keys(emqx_delayed),
     ?assertEqual([], EmptyKey),
     ok = emqx_delayed:disable().
+
+t_is_enabled(_Config) ->
+    ok = emqx_delayed:disable(),
+    ?assertNot(emqx_delayed:is_enabled()),
+    ok = emqx_delayed:enable(),
+    ?assert(emqx_delayed:is_enabled()),
+    ok = emqx_delayed:disable(),
+    ?assertNot(emqx_delayed:is_enabled()),
+    ok.

@@ -42,10 +42,11 @@
     code_change/3
 ]).
 
-%% gen_server callbacks
+%% api
 -export([
     enable/0,
     disable/0,
+    is_enabled/0,
     set_max_delayed_messages/1,
     update_config/1,
     list/1,
@@ -72,7 +73,8 @@
     publish_at := non_neg_integer(),
     stats_timer := maybe(reference()),
     stats_fun := maybe(fun((pos_integer()) -> ok)),
-    max_delayed_messages := non_neg_integer()
+    max_delayed_messages := non_neg_integer(),
+    enabled := boolean()
 }.
 
 %% sync ms with record change
@@ -146,6 +148,9 @@ enable() ->
 
 disable() ->
     gen_server:call(?SERVER, disable).
+
+is_enabled() ->
+    gen_server:call(?SERVER, is_enabled).
 
 set_max_delayed_messages(Max) ->
     gen_server:call(?SERVER, {set_max_delayed_messages, Max}).
@@ -268,7 +273,8 @@ init([Opts]) ->
                 publish_at => 0,
                 stats_timer => undefined,
                 stats_fun => undefined,
-                max_delayed_messages => MaxDelayedMessages
+                max_delayed_messages => MaxDelayedMessages,
+                enabled => false
             })
         )}.
 
@@ -298,10 +304,12 @@ handle_call(
     end;
 handle_call(enable, _From, State) ->
     emqx_hooks:put('message.publish', {?MODULE, on_message_publish, []}),
-    {reply, ok, State};
+    {reply, ok, State#{enabled => true}};
 handle_call(disable, _From, State) ->
     emqx_hooks:del('message.publish', {?MODULE, on_message_publish}),
-    {reply, ok, State};
+    {reply, ok, State#{enabled => false}};
+handle_call(is_enabled, _From, State = #{enabled := IsEnabled}) ->
+    {reply, IsEnabled, State};
 handle_call(Req, _From, State) ->
     ?SLOG(error, #{msg => "unexpected_call", call => Req}),
     {reply, ignored, State}.

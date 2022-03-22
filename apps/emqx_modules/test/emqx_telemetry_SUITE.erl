@@ -29,11 +29,11 @@ all() -> emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
     snabbkaffe:fix_ct_logging(),
-    emqx_common_test_helpers:start_apps([emqx_modules]),
+    emqx_common_test_helpers:start_apps([emqx_conf, emqx_modules]),
     Config.
 
 end_per_suite(_Config) ->
-    emqx_common_test_helpers:stop_apps([emqx_modules]).
+    emqx_common_test_helpers:stop_apps([emqx_conf, emqx_modules]).
 
 init_per_testcase(t_get_telemetry, Config) ->
     DataDir = ?config(data_dir, Config),
@@ -66,6 +66,19 @@ init_per_testcase(t_get_telemetry, Config) ->
         end
     ),
     Config;
+init_per_testcase(t_advanced_mqtt_features, Config) ->
+    Keys = [
+        [rewrite],
+        [auto_subscribe, topics],
+        [retainer, enable],
+        [delayed, enable]
+    ],
+    OldValues = lists:map(fun(K) -> {K, emqx:get_config(K)} end, Keys),
+    emqx_config:put([rewrite], []),
+    emqx_config:put([auto_subscribe, topics], []),
+    emqx_config:put([retainer, enable], false),
+    emqx_config:put([delayed, enable], false),
+    [{old_values, OldValues} | Config];
 init_per_testcase(_Testcase, Config) ->
     TestPID = self(),
     ok = meck:new(httpc, [non_strict, passthrough, no_history, no_link]),
@@ -79,6 +92,14 @@ init_per_testcase(_Testcase, Config) ->
 end_per_testcase(t_get_telemetry, _Config) ->
     meck:unload([httpc, emqx_telemetry]),
     ok;
+end_per_testcase(t_advanced_mqtt_features, Config) ->
+    OldValues = ?config(old_values, Config),
+    lists:foreach(
+        fun({K, V}) ->
+            emqx_config:put(K, V)
+        end,
+        OldValues
+    );
 end_per_testcase(_Testcase, _Config) ->
     meck:unload([httpc]),
     ok.
@@ -142,6 +163,36 @@ t_get_telemetry(_Config) ->
     ?assert(is_integer(maps:get(num_topics, MQTTRTInsights))),
     ok.
 
+t_advanced_mqtt_features(_) ->
+    {ok, TelemetryData} = emqx_telemetry:get_telemetry(),
+    AdvFeats = get_value(advanced_mqtt_features, TelemetryData),
+    ?assertEqual(
+        #{
+            retained => 0,
+            topic_rewrite => 0,
+            auto_subscribe => 0,
+            delayed => 0
+        },
+        AdvFeats
+    ),
+    lists:foreach(
+        fun({TelemetryKey, ConfKey, ConfValue}) ->
+            emqx_config:put(ConfKey, ConfValue),
+            {ok, Data} = emqx_telemetry:get_telemetry(),
+            #{TelemetryKey := Value} = get_value(advanced_mqtt_features, Data),
+            ?assertEqual(1, Value, #{key => TelemetryKey})
+        end,
+        [
+            {retained, [retainer, enable], true},
+            {topic_rewrite, [rewrite], [
+                #{action => all, source_topic => "old", dest_topic => "new"}
+            ]},
+            {auto_subscribe, [auto_subscribe, topics], [#{topic => "topic"}]},
+            {delayed, [delayed, enable], true}
+        ]
+    ),
+    ok.
+
 t_enable(_) ->
     ok = meck:new(emqx_telemetry, [non_strict, passthrough, no_history, no_link]),
     ok = meck:expect(emqx_telemetry, official_version, fun(_) -> true end),
@@ -176,6 +227,13 @@ t_send_after_enable(_) ->
                                 <<"messages_received_rate">> := _,
                                 <<"messages_sent_rate">> := _,
                                 <<"num_topics">> := _
+                            },
+                        <<"advanced_mqtt_features">> :=
+                            #{
+                                <<"retained">> := _,
+                                <<"topic_rewrite">> := _,
+                                <<"auto_subscribe">> := _,
+                                <<"delayed">> := _
                             }
                     },
                     Decoded

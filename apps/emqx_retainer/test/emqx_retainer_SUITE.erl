@@ -71,6 +71,12 @@ init_per_testcase(_, Config) ->
     timer:sleep(200),
     Config.
 
+end_per_testcase(t_is_enabled, _Config) ->
+    {ok, _} = emqx_retainer:update_config(#{<<"enable">> => true}),
+    ok;
+end_per_testcase(_Testcase, _Confi) ->
+    ok.
+
 load_base_conf() ->
     ok = emqx_common_test_helpers:load_config(emqx_retainer_schema, ?BASE_CONF).
 
@@ -423,6 +429,14 @@ t_only_for_coverage(_) ->
     unexpected = erlang:send(Dispatcher, unexpected),
     true = erlang:exit(Dispatcher, normal),
     ok.
+
+t_is_enabled(_Config) ->
+    {ok, _} = emqx_retainer:update_config(#{<<"enable">> => false}),
+    ?assertNot(emqx_retainer:is_enabled()),
+    {ok, _} = emqx_retainer:update_config(#{<<"enable">> => true}),
+    ?assert(emqx_retainer:is_enabled()),
+    {ok, _} = emqx_retainer:update_config(#{<<"enable">> => false}),
+    ?assertNot(emqx_retainer:is_enabled()).
 
 %%--------------------------------------------------------------------
 %% Helper functions

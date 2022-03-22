@@ -39,6 +39,7 @@
         , page_read/3
         , post_config_update/5
         , stats_fun/0
+        , is_enabled/0
         ]).
 
 %% gen_server callbacks
@@ -114,6 +115,9 @@ on_message_publish(Msg, _) ->
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
+is_enabled() ->
+    call(is_enabled).
+
 get_expiry_time(#message{headers = #{properties := #{'Message-Expiry-Interval' := 0}}}) ->
     0;
 get_expiry_time(#message{headers = #{properties := #{'Message-Expiry-Interval' := Interval}},
@@ -167,6 +171,9 @@ init([]) ->
          _ ->
              State
      end}.
+
+handle_call(is_enabled, _From, State = #{enable := IsEnabled}) ->
+    {reply, IsEnabled, State};
 
 handle_call({update_config, NewConf, OldConf}, _, State) ->
     State2 = update_config(State, NewConf, OldConf),

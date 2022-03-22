@@ -449,13 +449,11 @@ update_mqtt_rates(State) ->
     {#{}, State}.
 
 advanced_mqtt_features() ->
-    RewriteEnabled = length(emqx:get_config([rewrite], [])) > 0,
-    AutoSubEnabled = length(emqx:get_config([auto_subscribe, topics], [])) > 0,
     #{
-        retained => bool2int(emqx:get_config([retainer, enable], false)),
-        topic_rewrite => bool2int(RewriteEnabled),
-        auto_subscribe => bool2int(AutoSubEnabled),
-        delayed => bool2int(emqx:get_config([delayed, enable], false))
+        retained => bool2int(emqx_retainer:is_enabled()),
+        topic_rewrite => bool2int(emqx_rewrite:is_enabled()),
+        auto_subscribe => bool2int(emqx_auto_subscribe:is_enabled()),
+        delayed => bool2int(emqx_delayed:is_enabled())
     }.
 
 bin(L) when is_list(L) ->

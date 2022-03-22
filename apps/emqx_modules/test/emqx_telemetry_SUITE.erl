@@ -29,11 +29,11 @@ all() -> emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
     snabbkaffe:fix_ct_logging(),
-    emqx_common_test_helpers:start_apps([emqx_conf, emqx_modules]),
+    emqx_common_test_helpers:start_apps([emqx_conf, emqx_modules, emqx_retainer]),
     Config.
 
 end_per_suite(_Config) ->
-    emqx_common_test_helpers:stop_apps([emqx_conf, emqx_modules]).
+    emqx_common_test_helpers:stop_apps([emqx_conf, emqx_modules, emqx_retainer]).
 
 init_per_testcase(t_get_telemetry, Config) ->
     DataDir = ?config(data_dir, Config),
@@ -68,16 +68,13 @@ init_per_testcase(t_get_telemetry, Config) ->
     Config;
 init_per_testcase(t_advanced_mqtt_features, Config) ->
     Keys = [
-        [rewrite],
-        [auto_subscribe, topics],
-        [retainer, enable],
-        [delayed, enable]
+        [auto_subscribe, topics]
     ],
     OldValues = lists:map(fun(K) -> {K, emqx:get_config(K)} end, Keys),
-    emqx_config:put([rewrite], []),
-    emqx_config:put([auto_subscribe, topics], []),
-    emqx_config:put([retainer, enable], false),
-    emqx_config:put([delayed, enable], false),
+    ok = emqx_rewrite:disable(),
+    ok = emqx_config:put([auto_subscribe, topics], []),
+    {ok, _} = emqx_retainer:update_config(#{<<"enable">> => false}),
+    ok = emqx_delayed:disable(),
     [{old_values, OldValues} | Config];
 init_per_testcase(_Testcase, Config) ->
     TestPID = self(),
@@ -176,19 +173,17 @@ t_advanced_mqtt_features(_) ->
         AdvFeats
     ),
     lists:foreach(
-        fun({TelemetryKey, ConfKey, ConfValue}) ->
-            emqx_config:put(ConfKey, ConfValue),
+        fun({TelemetryKey, Fun}) ->
+            Fun(),
             {ok, Data} = emqx_telemetry:get_telemetry(),
             #{TelemetryKey := Value} = get_value(advanced_mqtt_features, Data),
             ?assertEqual(1, Value, #{key => TelemetryKey})
         end,
         [
-            {retained, [retainer, enable], true},
-            {topic_rewrite, [rewrite], [
-                #{action => all, source_topic => "old", dest_topic => "new"}
-            ]},
-            {auto_subscribe, [auto_subscribe, topics], [#{topic => "topic"}]},
-            {delayed, [delayed, enable], true}
+            {retained, fun() -> emqx_retainer:update_config(#{<<"enable">> => true}) end},
+            {topic_rewrite, fun emqx_rewrite:enable/0},
+            {auto_subscribe, fun() -> emqx_auto_subscribe:update([#{<<"topic">> => "topic"}]) end},
+            {delayed, fun emqx_delayed:enable/0}
         ]
     ),
     ok.

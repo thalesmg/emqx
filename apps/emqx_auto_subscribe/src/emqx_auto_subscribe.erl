@@ -26,6 +26,7 @@
         , list/0
         , update/1
         , post_config_update/5
+        , is_enabled/0
         ]).
 
 %% hook callback
@@ -50,6 +51,10 @@ update(Topics) ->
 post_config_update(_KeyPath, _Req, NewTopics, _OldConf, _AppEnvs) ->
     Config = emqx_conf:get([auto_subscribe], #{}),
     update_hook(Config#{topics => NewTopics}).
+
+is_enabled() ->
+    Topics = emqx_conf:get([auto_subscribe, topics], []),
+    length(Topics) > 0.
 
 %%--------------------------------------------------------------------
 %% hook

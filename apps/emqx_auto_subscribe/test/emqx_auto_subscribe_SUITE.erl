@@ -39,7 +39,7 @@
 -define(CLIENT_USERNAME, <<"auto_sub_u">>).
 
 all() ->
-    [t_auto_subscribe, t_update].
+    [t_auto_subscribe, t_update, t_is_enabled].
 
 init_per_suite(Config) ->
     mria:start(),
@@ -148,6 +148,14 @@ t_update(_) ->
     ?assertEqual(1, erlang:length(GETResponseMap)),
     ok.
 
+t_is_enabled(_Config) ->
+    ok = emqx_config:put([auto_subscribe, topics], []),
+    ?assertNot(emqx_auto_subscribe:is_enabled()),
+    emqx_auto_subscribe:update([#{<<"topic">> => Topic} || Topic <- ?TOPICS]),
+    ?assert(emqx_auto_subscribe:is_enabled()),
+    ok = emqx_config:put([auto_subscribe, topics], []),
+    ?assertNot(emqx_auto_subscribe:is_enabled()),
+    ok.
 
 check_subs(Count) ->
     Subs = ets:tab2list(emqx_suboption),

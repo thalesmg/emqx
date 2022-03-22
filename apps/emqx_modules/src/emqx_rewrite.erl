@@ -36,7 +36,8 @@
 
 -export([
     enable/0,
-    disable/0
+    disable/0,
+    is_enabled/0
 ]).
 
 -export([
@@ -52,12 +53,18 @@
 enable() ->
     emqx_conf:add_handler([rewrite], ?MODULE),
     Rules = emqx_conf:get([rewrite], []),
-    register_hook(Rules).
+    register_hook(Rules),
+    application:set_env(emqx_modules, rewrite_enabled, true),
+    ok.
 
 disable() ->
     emqx_conf:remove_handler([rewrite]),
     unregister_hook(),
+    application:set_env(emqx_modules, rewrite_enabled, false),
     ok.
+
+is_enabled() ->
+    application:get_env(emqx_modules, rewrite_enabled, false).
 
 list() ->
     emqx_conf:get_raw([<<"rewrite">>], []).

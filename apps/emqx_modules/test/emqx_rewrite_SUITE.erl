@@ -203,6 +203,14 @@ t_update_re_failed(_Config) ->
     ),
     ok.
 
+t_is_enabled(_) ->
+    emqx_rewrite:disable(),
+    ?assertNot(emqx_rewrite:is_enabled()),
+    emqx_rewrite:enable(),
+    ?assert(emqx_rewrite:is_enabled()),
+    emqx_rewrite:disable(),
+    ?assertNot(emqx_rewrite:is_enabled()).
+
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------

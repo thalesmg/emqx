@@ -116,7 +116,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 is_enabled() ->
-    call(is_enabled).
+    emqx_conf:get([retainer, enable], false).
 
 get_expiry_time(#message{headers = #{properties := #{'Message-Expiry-Interval' := 0}}}) ->
     0;
@@ -171,9 +171,6 @@ init([]) ->
          _ ->
              State
      end}.
-
-handle_call(is_enabled, _From, State = #{enable := IsEnabled}) ->
-    {reply, IsEnabled, State};
 
 handle_call({update_config, NewConf, OldConf}, _, State) ->
     State2 = update_config(State, NewConf, OldConf),

@@ -20,84 +20,62 @@
 
 -behaviour(hocon_schema).
 
--export([ namespace/0
-        , roots/0
-        , fields/1]).
+-export([
+    namespace/0,
+    roots/0,
+    fields/1,
+    desc/1
+]).
 
 namespace() -> modules.
 
 roots() ->
-    ["delayed",
-     "telemetry",
-     "event_message",
-     array("rewrite"),
-     array("topic_metrics")].
+    [
+        "delayed",
+        "telemetry",
+        array("rewrite"),
+        array("topic_metrics")
+    ].
 
 fields("telemetry") ->
-    [ {enable, hoconsc:mk(boolean(), #{default => false})}
-    ];
-
+    [{enable, hoconsc:mk(boolean(), #{default => false})}];
 fields("delayed") ->
-    [ {enable, hoconsc:mk(boolean(), #{default => false})}
-    , {max_delayed_messages, sc(integer(), #{})}
+    [
+        {enable, hoconsc:mk(boolean(), #{default => false})},
+        {max_delayed_messages, sc(integer(), #{})}
     ];
-
 fields("rewrite") ->
-    [ { action
-      , sc( hoconsc:enum([subscribe, publish, all])
-          , #{desc => <<"Action">>, example => publish})}
-    , { source_topic
-      , sc( binary()
-          , #{desc => <<"Origin Topic">>, example => "x/#"})}
-    , { dest_topic
-      , sc( binary()
-          , #{desc => <<"Destination Topic">>, example => "z/y/$1"})}
-    , { re, fun regular_expression/1 }
+    [
+        {action,
+            sc(
+                hoconsc:enum([subscribe, publish, all]),
+                #{desc => <<"Action">>, example => publish}
+            )},
+        {source_topic,
+            sc(
+                binary(),
+                #{desc => <<"Origin Topic">>, example => "x/#"}
+            )},
+        {dest_topic,
+            sc(
+                binary(),
+                #{desc => <<"Destination Topic">>, example => "z/y/$1"}
+            )},
+        {re, fun regular_expression/1}
     ];
-
-
-fields("event_message") ->
-    Fields =
-        [ { client_connected
-        , sc( boolean()
-            , #{desc => <<"Enable/disable client_connected event messages">>,
-                default => false})}
-        , { client_disconnected
-        , sc(boolean()
-            , #{desc => <<"Enable/disable client_disconnected event messages">>,
-                default => false})}
-        , { client_subscribed
-        , sc( boolean()
-            , #{desc => <<"Enable/disable client_subscribed event messages">>,
-                default => false})}
-        , { client_unsubscribed
-        , sc( boolean()
-            , #{desc => <<"Enable/disable client_unsubscribed event messages">>,
-                default => false})}
-        , { message_delivered
-        , sc( boolean()
-            , #{desc => <<"Enable/disable message_delivered event messages">>,
-                default => false})}
-        , { message_acked
-        , sc( boolean()
-            , #{desc => <<"Enable/disable message_acked event messages">>,
-                default => false})}
-        , { message_dropped
-        , sc( boolean()
-            , #{desc => <<"Enable/disable message_dropped event messages">>,
-                default => false})}
-        ],
-    #{fields => Fields,
-      desc => """
-Enable/Disable system event messages.
-The messages are published to '$event' prefixed topics.
-For example, if `client_disconnected` is set to `true`,
-a message is published to `$event/client_connected` topic
-whenever a client is connected.
-"""};
-
 fields("topic_metrics") ->
     [{topic, sc(binary(), #{})}].
+
+desc("telemetry") ->
+    "Settings for the telemetry module.";
+desc("delayed") ->
+    "Settings for the delayed module.";
+desc("rewrite") ->
+    "Settings for the rewrite module.";
+desc("topic_metrics") ->
+    "Settings for the topic metrics module.";
+desc(_) ->
+    undefined.
 
 regular_expression(type) -> binary();
 regular_expression(desc) -> "Regular expressions";

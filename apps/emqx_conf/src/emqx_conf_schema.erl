@@ -36,7 +36,7 @@
                 file/0,
                 cipher/0]).
 
--export([namespace/0, roots/0, fields/1, translations/0, translation/1, validations/0]).
+-export([namespace/0, roots/0, fields/1, translations/0, translation/1, validations/0, desc/1]).
 -export([conf_get/2, conf_get/3, keys/2, filter/1]).
 
 %% Static apps which merge their configs into the merged emqx.conf
@@ -73,30 +73,23 @@ roots() ->
     emqx_schema_high_prio_roots() ++
     [ {"node",
        sc(ref("node"),
-          #{ desc => "Node name, cookie, config & data directories "
-                     "and the Erlang virtual machine (BEAM) boot parameters."
+          #{ translate_to => ["emqx"]
            })}
     , {"cluster",
        sc(ref("cluster"),
-          #{ desc => "EMQX nodes can form a cluster to scale up the total capacity.<br>"
-                     "Here holds the configs to instruct how individual nodes "
-                     "can discover each other."
+          #{  translate_to => ["ekka"]
            })}
     , {"log",
        sc(ref("log"),
-          #{ desc => "Configure logging backends (to console or to file), "
-                     "and logging level for each logger backend."
+          #{ translate_to => ["kernel"]
            })}
     , {"rpc",
        sc(ref("rpc"),
-          #{ desc => "EMQX uses a library called <code>gen_rpc</code> for "
-                     "inter-broker communication.<br/>Most of the time the default config "
-                     "should work, but in case you need to do performance "
-                     "fine-turning or experiment a bit, this is where to look."
+          #{ translate_to => ["gen_rpc"]
            })}
     , {"db",
        sc(ref("db"),
-          #{ desc => "Settings of the embedded database."
+          #{
            })}
     ] ++
     emqx_schema:roots(medium) ++
@@ -113,17 +106,20 @@ fields("cluster") ->
           #{ mapping => "ekka.cluster_name"
            , default => emqxcl
            , desc => "Human-friendly name of the EMQX cluster."
+           , 'readOnly' => true
            })}
     , {"discovery_strategy",
        sc(hoconsc:enum([manual, static, mcast, dns, etcd, k8s]),
           #{ default => manual
            , desc => "Service discovery method for the cluster nodes."
+           , 'readOnly' => true
            })}
     , {"autoclean",
        sc(emqx_schema:duration(),
           #{ mapping => "ekka.cluster_autoclean"
            , default => "5m"
            , desc => "Remove disconnected nodes from the cluster after this interval."
+           , 'readOnly' => true
            })}
     , {"autoheal",
        sc(boolean(),
@@ -131,32 +127,33 @@ fields("cluster") ->
            , default => true
            , desc => "If <code>true</code>, the node will try to heal network partitions
  automatically."
-           })}
+           , 'readOnly' => true
+          })}
     , {"proto_dist",
        sc(hoconsc:enum([inet_tcp, inet6_tcp, inet_tls]),
           #{ mapping => "ekka.proto_dist"
            , default => inet_tcp
-           })}
+           , 'readOnly' => true
+          })}
     , {"static",
        sc(ref(cluster_static),
-          #{ desc => "Service discovery via static nodes. The new node joins the cluster by
- connecting to one of the bootstrap nodes."
+          #{
            })}
     , {"mcast",
        sc(ref(cluster_mcast),
-          #{ desc => "Service discovery via UDP multicast."
+          #{
            })}
     , {"dns",
        sc(ref(cluster_dns),
-          #{ desc => "Service discovery via DNS SRV records."
+          #{
            })}
     , {"etcd",
        sc(ref(cluster_etcd),
-          #{ desc => "Service discovery using 'etcd' service."
+          #{
            })}
     , {"k8s",
        sc(ref(cluster_k8s),
-          #{ desc => "Service discovery via Kubernetes API server."
+          #{
            })}
     ];
 
@@ -165,7 +162,8 @@ fields(cluster_static) ->
       sc(hoconsc:array(atom()),
          #{ default => []
           , desc => "List EMQX node names in the static cluster. See <code>node.name</code>."
-          })}
+          , 'readOnly' => true
+         })}
     ];
 
 fields(cluster_mcast) ->
@@ -173,10 +171,12 @@ fields(cluster_mcast) ->
        sc(string(),
           #{ default => "239.192.0.1"
            , desc => "Multicast IPv4 address."
-           })}
+           , 'readOnly' => true
+          })}
     , {"ports",
        sc(hoconsc:array(integer()),
           #{ default => [4369, 4370]
+           , 'readOnly' => true
            , desc => "List of UDP ports used for service discovery.<br/>
 Note: probe messages are broadcast to all the specified ports."
            })}
@@ -184,32 +184,38 @@ Note: probe messages are broadcast to all the specified ports."
        sc(string(),
           #{ default => "0.0.0.0"
            , desc => "Local IP address the node discovery service needs to bind to."
-           })}
+           , 'readOnly' => true
+          })}
     , {"ttl",
        sc(range(0, 255),
           #{ default => 255
            , desc => "Time-to-live (TTL) for the outgoing UDP datagrams."
-           })}
+           , 'readOnly' => true
+          })}
     , {"loop",
        sc(boolean(),
           #{ default => true
            , desc => "If <code>true</code>, loop UDP datagrams back to the local socket."
-           })}
+           , 'readOnly' => true
+          })}
     , {"sndbuf",
        sc(emqx_schema:bytesize(),
           #{ default => "16KB"
            , desc => "Size of the kernel-level buffer for outgoing datagrams."
-           })}
+           , 'readOnly' => true
+          })}
     , {"recbuf",
        sc(emqx_schema:bytesize(),
           #{ default => "16KB"
            , desc => "Size of the kernel-level buffer for incoming datagrams."
-           })}
+           , 'readOnly' => true
+          })}
     , {"buffer",
        sc(emqx_schema:bytesize(),
           #{ default =>"32KB"
            , desc => "Size of the user-level buffer."
-           })}
+           , 'readOnly' => true
+          })}
     ];
 
 fields(cluster_dns) ->
@@ -217,11 +223,13 @@ fields(cluster_dns) ->
        sc(string(),
           #{ default => "localhost"
            , desc => "The domain name of the EMQX cluster."
-           })}
+           , 'readOnly' => true
+          })}
     , {"app",
        sc(string(),
           #{ default => "emqx"
            , desc => "The symbolic name of the EMQX service."
+           , 'readOnly' => true
            })}
     ];
 
@@ -229,21 +237,25 @@ fields(cluster_etcd) ->
     [ {"server",
        sc(emqx_schema:comma_separated_list(),
           #{ desc => "List of endpoint URLs of the etcd cluster"
+           , 'readOnly' => true
            })}
     , {"prefix",
        sc(string(),
           #{ default => "emqxcl"
            , desc => "Key prefix used for EMQX service discovery."
+           , 'readOnly' => true
            })}
     , {"node_ttl",
        sc(emqx_schema:duration(),
           #{ default => "1m"
+           , 'readOnly' => true
            , desc => "Expiration time of the etcd key associated with the node.
 It is refreshed automatically, as long as the node is alive."
            })}
     , {"ssl",
        sc(hoconsc:ref(emqx_schema, ssl_client_opts),
           #{ desc => "Options for the TLS connection to the etcd cluster."
+           , 'readOnly' => true
            })}
     ];
 
@@ -251,19 +263,23 @@ fields(cluster_k8s) ->
     [ {"apiserver",
        sc(string(),
           #{ desc => "Kubernetes API endpoint URL."
+           , 'readOnly' => true
            })}
     , {"service_name",
        sc(string(),
           #{ default => "emqx"
            , desc => "EMQX broker service name."
+           , 'readOnly' => true
            })}
     , {"address_type",
        sc(hoconsc:enum([ip, dns, hostname]),
           #{ desc => "Address type used for connecting to the discovered nodes."
+           , 'readOnly' => true
            })}
     , {"app_name",
        sc(string(),
           #{ default => "emqx"
+           , 'readOnly' => true
            , desc => "This parameter should be set to the part of the <code>node.name</code>
 before the '@'.<br/>
 For example, if the <code>node.name</code> is <code>emqx@127.0.0.1</code>, then this parameter
@@ -273,10 +289,12 @@ should be set to <code>emqx</code>."
        sc(string(),
           #{ default => "default"
            , desc => "Kubernetes namespace."
+           , 'readOnly' => true
            })}
     , {"suffix",
        sc(string(),
           #{ default => "pod.local"
+           , 'readOnly' => true
            , desc => "Node name suffix.<br/>
 Note: this parameter is only relevant when <code>address_type</code> is <code>dns</code>
 or <code>hostname</code>."
@@ -286,14 +304,16 @@ or <code>hostname</code>."
 fields("node") ->
     [ {"name",
        sc(string(),
-          #{ default => "emqx@127.0.0.1",
-             desc => "Unique name of the EMQX node. It must follow <code>%name%@FQDN</code> or
+          #{ default => "emqx@127.0.0.1"
+           , 'readOnly' => true
+           ,  desc => "Unique name of the EMQX node. It must follow <code>%name%@FQDN</code> or
  <code>%name%@IPv4</code> format."
            })}
     , {"cookie",
        sc(string(),
           #{ mapping => "vm_args.-setcookie",
              default => "emqxsecretcookie",
+             'readOnly' => true,
              sensitive => true,
              desc => "Secret cookie is a random string that should be the same on all nodes in
  the given EMQX cluster, but unique per EMQX cluster. It is used to prevent EMQX nodes that
@@ -302,6 +322,7 @@ fields("node") ->
     , {"data_dir",
        sc(string(),
           #{ required => true,
+             'readOnly' => true,
              mapping => "emqx.data_dir",
              desc =>
 """
@@ -323,6 +344,7 @@ Possible auto-created subdirectories are:
        sc(list(string()),
           #{ mapping => "emqx.config_files"
            , default => undefined
+           , 'readOnly' => true
            , desc => "List of configuration files that are read during startup. The order is
  significant: later configuration files override the previous ones."
            })}
@@ -331,11 +353,13 @@ Possible auto-created subdirectories are:
          #{ mapping => "emqx_machine.global_gc_interval"
           , default => "15m"
           , desc => "Periodic garbage collection interval."
+          , 'readOnly' => true
           })}
     , {"crash_dump_file",
        sc(file(),
           #{ mapping => "vm_args.-env ERL_CRASH_DUMP"
            , desc => "Location of the crash dump file"
+           , 'readOnly' => true
            })}
     , {"crash_dump_seconds",
        sc(emqx_schema:duration_s(),
@@ -343,38 +367,28 @@ Possible auto-created subdirectories are:
            , default => "30s"
            , desc => "The number of seconds that the broker is allowed to spend writing
 a crash dump"
+           , 'readOnly' => true
            })}
     , {"crash_dump_bytes",
        sc(emqx_schema:bytesize(),
           #{ mapping => "vm_args.-env ERL_CRASH_DUMP_BYTES"
            , default => "100MB"
            , desc => "The maximum size of a crash dump file in bytes."
+           , 'readOnly' => true
            })}
     , {"dist_net_ticktime",
        sc(emqx_schema:duration(),
           #{ mapping => "vm_args.-kernel net_ticktime"
            , default => "2m"
+           , 'readOnly' => true
            , desc => "This is the approximate time an EMQX node may be unresponsive "
                      "until it is considered down and thereby disconnected."
-           })}
-    , {"dist_listen_min",
-       sc(range(1024, 65535),
-          #{ mapping => "kernel.inet_dist_listen_min"
-           , default => 6369
-           , desc => "Lower bound for the port range where EMQX broker "
-                     "listens for peer connections."
-           })}
-    , {"dist_listen_max",
-       sc(range(1024, 65535),
-          #{ mapping => "kernel.inet_dist_listen_max"
-           , default => 6369
-           , desc => "Upper bound for the port range where EMQX broker "
-                     "listens for peer connections."
            })}
     , {"backtrace_depth",
        sc(integer(),
           #{ mapping => "emqx_machine.backtrace_depth"
            , default => 23
+           , 'readOnly' => true
            , desc => "Maximum depth of the call stack printed in error messages and
  <code>process_info</code>."
            })}
@@ -382,19 +396,20 @@ a crash dump"
        sc(emqx_schema:comma_separated_atoms(),
           #{ mapping => "emqx_machine.applications"
            , default => []
+           , 'readOnly' => true
            , desc => "List of Erlang applications that shall be rebooted when the EMQX broker joins
  the cluster."
            })}
     , {"etc_dir",
        sc(string(),
           #{ desc => "<code>etc</code> dir for the node"
+           , 'readOnly' => true
            }
          )}
     , {"cluster_call",
       sc(ref("cluster_call"),
-        #{ desc => "Options for the 'cluster call' feature that allows to execute a callback
- on all nodes in the cluster."
-          }
+        #{ 'readOnly' => true
+         }
         )}
     ];
 
@@ -403,9 +418,10 @@ fields("db") ->
        sc(hoconsc:enum([mnesia, rlog]),
           #{ mapping => "mria.db_backend"
            , default => rlog
+           , 'readOnly' => true
            , desc => """
 Select the backend for the embedded database.<br/>
-<code>rlog</code> is the default backend, a new experimental backend
+<code>rlog</code> is the default backend,
 that is suitable for very large clusters.<br/>
 <code>mnesia</code> is a backend that offers decent performance in small clusters.
 """
@@ -414,6 +430,7 @@ that is suitable for very large clusters.<br/>
        sc(hoconsc:enum([core, replicant]),
           #{ mapping => "mria.node_role"
            , default => core
+           , 'readOnly' => true
            , desc => """
 Select a node role.<br/>
 <code>core</code> nodes provide durability of the data, and take care of writes.
@@ -429,6 +446,7 @@ to <code>rlog</code>.
        sc(emqx_schema:comma_separated_atoms(),
           #{ mapping => "mria.core_nodes"
            , default => []
+           , 'readOnly' => true
            , desc => """
 List of core nodes that the replicant will connect to.<br/>
 Note: this parameter only takes effect when the <code>backend</code> is set
@@ -442,6 +460,7 @@ there is no need to set this value.
        sc(hoconsc:enum([gen_rpc, rpc]),
           #{ mapping => "mria.rlog_rpc_module"
            , default => gen_rpc
+           , 'readOnly' => true
            , desc => """
 Protocol used for pushing transaction logs to the replicant nodes.
 """
@@ -450,6 +469,7 @@ Protocol used for pushing transaction logs to the replicant nodes.
        sc(hoconsc:enum([sync, async]),
           #{ mapping => "mria.tlog_push_mode"
            , default => async
+           , 'readOnly' => true
            , desc => """
 In sync mode the core node waits for an ack from the replicant nodes before sending the next
 transaction log entry.
@@ -618,11 +638,13 @@ fields("log") ->
     [ {"console_handler", ref("console_handler")}
     , {"file_handlers",
        sc(map(name, ref("log_file_handler")),
-          #{})}
+          #{desc => "Key-value list of file-based log handlers."})}
     , {"error_logger",
        sc(atom(),
           #{mapping => "kernel.error_logger",
-            default => silent})}
+            default => silent,
+            desc => "Deprecated."
+           })}
     ];
 
 fields("console_handler") ->
@@ -631,13 +653,17 @@ fields("console_handler") ->
 fields("log_file_handler") ->
     [ {"file",
        sc(file(),
-          #{})}
+          #{ desc => "Name the log file."
+           })}
     , {"rotation",
        sc(ref("log_rotation"),
           #{})}
     , {"max_size",
        sc(hoconsc:union([infinity, emqx_schema:bytesize()]),
           #{ default => "10MB"
+           , desc => "This parameter controls log file rotation. "
+                     "The value `infinity` means the log file will grow indefinitely, "
+                     "otherwise the log file will be rotated once it reaches `max_size` in bytes."
            })}
     ] ++ log_handler_common_confs();
 
@@ -645,10 +671,12 @@ fields("log_rotation") ->
     [ {"enable",
        sc(boolean(),
           #{ default => true
+           , desc => "Enable log rotation feature."
            })}
     , {"count",
        sc(range(1, 2048),
           #{ default => 10
+           , desc => "Maximum number of log files."
            })}
     ];
 
@@ -656,18 +684,23 @@ fields("log_overload_kill") ->
     [ {"enable",
        sc(boolean(),
           #{ default => true
+           , desc => "Enable log handler overload kill feature."
            })}
     , {"mem_size",
        sc(emqx_schema:bytesize(),
           #{ default => "30MB"
+           , desc => "Maximum memory size that the handler process is allowed to use."
            })}
     , {"qlen",
        sc(integer(),
           #{ default => 20000
+           , desc => "Maximum allowed queue length."
            })}
     , {"restart_after",
        sc(hoconsc:union([emqx_schema:duration(), infinity]),
           #{ default => "5s"
+           , desc => "If the handler is terminated, it restarts automatically after a "
+                     "delay specified in milliseconds. The value `infinity` prevents restarts."
            })}
     ];
 
@@ -675,19 +708,81 @@ fields("log_burst_limit") ->
     [ {"enable",
        sc(boolean(),
           #{ default => true
+           , desc => "Enable log burst control feature."
            })}
     , {"max_count",
        sc(integer(),
           #{ default => 10000
+           , desc => "Maximum number of log events to handle within a `window_time` interval. "
+                     "After the limit is reached, successive events are dropped "
+                     "until the end of the `window_time`."
            })}
     , {"window_time",
        sc(emqx_schema:duration(),
-          #{default => "1s"})}
+          #{ default => "1s"
+           , desc => "See `max_count`."
+           })}
     ];
 
 fields("authorization") ->
     emqx_schema:fields("authorization") ++
     emqx_authz_schema:fields("authorization").
+
+
+desc("cluster") ->
+    "EMQX nodes can form a cluster to scale up the total capacity.<br>"
+    "Here holds the configs to instruct how individual nodes "
+    "can discover each other.";
+desc(cluster_static) ->
+     "Service discovery via static nodes. The new node joins the cluster by "
+     "connecting to one of the bootstrap nodes.";
+desc(cluster_mcast) ->
+    "Service discovery via UDP multicast.";
+desc(cluster_dns) ->
+     "Service discovery via DNS SRV records.";
+desc(cluster_etcd) ->
+    "Service discovery using 'etcd' service.";
+desc(cluster_k8s) ->
+    "Service discovery via Kubernetes API server.";
+desc("node") ->
+    "Node name, cookie, config & data directories "
+    "and the Erlang virtual machine (BEAM) boot parameters.";
+desc("db") ->
+    "Settings for the embedded database.";
+desc("cluster_call") ->
+    "Options for the 'cluster call' feature that allows to execute a callback "
+    "on all nodes in the cluster.";
+desc("rpc") ->
+    "EMQX uses a library called <code>gen_rpc</code> for "
+    "inter-broker communication.<br/>Most of the time the default config "
+    "should work, but in case you need to do performance "
+    "fine-tuning or experiment a bit, this is where to look.";
+desc("log") ->
+    "EMQX logging supports multiple sinks for the log events."
+    " Each sink is represented by a _log handler_, which can be configured independently.";
+desc("console_handler") ->
+    "Log handler that prints log events to the EMQX console.";
+desc("log_file_handler") ->
+    "Log handler that prints log events to files.";
+desc("log_rotation") ->
+    "By default, the logs are stored in `./log` directory (for installation from zip file)"
+    " or in `/var/log/emqx` (for binary installation).<br/>"
+    "This section of the configuration controls the number of files kept for each log handler.";
+desc("log_overload_kill") ->
+    "Log overload kill features an overload protection that activates when"
+    " the log handlers use too much memory or have too many buffered log messages.<br/>"
+    "When the overload is detected, the log handler is terminated and restarted after a"
+    " cooldown period.";
+desc("log_burst_limit") ->
+    "Large bursts of log events produced in a short time can potentially cause problems, such as:\n"
+     " - Log files grow very large\n"
+     " - Log files are rotated too quickly, and useful information gets overwritten\n"
+     " - Overall performance impact on the system\n\n"
+    "Log burst limit feature can temporarily disable logging to avoid these issues.";
+desc("authorization") ->
+    "Settings that control client authorization.";
+desc(_) ->
+    undefined.
 
 translations() -> ["ekka", "kernel", "emqx", "gen_rpc"].
 
@@ -737,6 +832,7 @@ tr_cluster_discovery(Conf) ->
     Strategy = conf_get("cluster.discovery_strategy", Conf),
     {Strategy, filter(options(Strategy, Conf))}.
 
+-spec tr_logger_level(hocon:config()) -> logger:level().
 tr_logger_level(Conf) ->
     ConsoleLevel = conf_get("log.console_handler.level", Conf, undefined),
     FileLevels = [conf_get("level", SubConf) || {_, SubConf}
@@ -772,7 +868,7 @@ tr_logger(Conf) ->
     %% For the file logger
     FileHandlers =
         [begin
-         {handler, binary_to_atom(HandlerName, latin1), logger_disk_log_h, #{
+         {handler, to_atom(HandlerName), logger_disk_log_h, #{
                 level => conf_get("level", SubConf),
                 config => (log_handler_conf(SubConf)) #{
                     type => case conf_get("rotation.enable", SubConf) of
@@ -794,6 +890,7 @@ log_handler_common_confs() ->
     [ {"enable",
        sc(boolean(),
           #{ default => false
+           , desc => "Enable this log handler."
            })}
     , {"level",
        sc(log_level(),
@@ -804,6 +901,7 @@ log_handler_common_confs() ->
     , {"time_offset",
        sc(string(),
           #{ default => "system"
+           , desc => "The time offset to be used when formatting the timestamp."
            })}
     , {"chars_limit",
        sc(hoconsc:union([unlimited, range(1, inf)]),
@@ -826,27 +924,37 @@ log_handler_common_confs() ->
     , {"sync_mode_qlen",
        sc(integer(),
           #{ default => 100
+           , desc => "As long as the number of buffered log events is lower than this value, "
+                     "all log events are handled asynchronously."
            })}
     , {"drop_mode_qlen",
        sc(integer(),
           #{ default => 3000
+           , desc => "When the number of buffered log events is larger than this value, "
+                     "the new log events are dropped.<br/>"
+                     "When drop mode is activated or deactivated, a message is printed in "
+                     "the logs."
            })}
     , {"flush_qlen",
        sc(integer(),
           #{ default => 8000
+           , desc => "If the number of buffered log events grows larger than this threshold, "
+                     "a flush (delete) operation takes place. "
+                     "To flush events, the handler discards the buffered log messages without logging."
            })}
     , {"overload_kill",
-       sc(ref("log_overload_kill"),
-          #{})}
+       sc(ref("log_overload_kill"), #{})}
     , {"burst_limit",
-       sc(ref("log_burst_limit"),
-          #{})}
+       sc(ref("log_burst_limit"), #{})}
     , {"supervisor_reports",
        sc(hoconsc:enum([error, progress]),
           #{ default => error
+           , desc => "Type of supervisor reports that are logged.\n"
+                     " - `error`: only log errors in the Erlang processes.\n"
+                     " - `progress`: log process startup."
            })}
     , {"max_depth",
-       sc(hoconsc:union([unlimited, integer()]),
+       sc(hoconsc:union([unlimited, non_neg_integer()]),
           #{ default => 100
            , desc => "Maximum depth for Erlang term log formatting "
                      "and Erlang process message queue inspection."

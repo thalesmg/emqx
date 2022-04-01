@@ -31,10 +31,12 @@ start(_StartType, _StartArgs) ->
         ok ->
             emqx_dashboard_cli:load(),
             {ok, _Result} = emqx_dashboard_admin:add_default_user(),
+            ok = emqx_dashboard_config:add_handler(),
             {ok, Sup};
         {error, Reason} -> {error, Reason}
     end.
 
 stop(_State) ->
+    ok = emqx_dashboard_config:remove_handler(),
     emqx_dashboard_cli:unload(),
     emqx_dashboard:stop_listeners().

@@ -54,7 +54,7 @@
 
 -export([ load_hooks_for_rule/1
         , unload_hooks_for_rule/1
-        , add_metrics_for_rule/1
+        , maybe_add_metrics_for_rule/1
         , clear_metrics_for_rule/1
         ]).
 
@@ -124,14 +124,18 @@ load_rules() ->
 -spec create_rule(map()) -> {ok, rule()} | {error, term()}.
 create_rule(Params = #{id := RuleId}) when is_binary(RuleId) ->
     case get_rule(RuleId) of
-        not_found -> do_create_rule(Params);
-        {ok, _} -> {error, {already_exists, RuleId}}
+        not_found -> parse_and_insert(Params, now_ms());
+        {ok, _} -> {error, already_exists}
     end.
 
 -spec update_rule(map()) -> {ok, rule()} | {error, term()}.
 update_rule(Params = #{id := RuleId}) when is_binary(RuleId) ->
-    ok = delete_rule(RuleId),
-    do_create_rule(Params).
+    case get_rule(RuleId) of
+        not_found ->
+            {error, not_found};
+        {ok, #{created_at := CreatedAt}} ->
+            parse_and_insert(Params, CreatedAt)
+    end.
 
 -spec(delete_rule(RuleId :: rule_id()) -> ok).
 delete_rule(RuleId) when is_binary(RuleId) ->
@@ -178,8 +182,12 @@ get_rule(Id) ->
 load_hooks_for_rule(#{from := Topics}) ->
     lists:foreach(fun emqx_rule_events:load/1, Topics).
 
-add_metrics_for_rule(Id) ->
-    ok = emqx_plugin_libs_metrics:create_metrics(rule_metrics, Id, ?METRICS, ?RATE_METRICS).
+maybe_add_metrics_for_rule(Id) ->
+    case emqx_plugin_libs_metrics:has_metrics(rule_metrics, Id) of
+        true -> ok;
+        false ->
+            ok = emqx_plugin_libs_metrics:create_metrics(rule_metrics, Id, ?METRICS, ?RATE_METRICS)
+    end.
 
 clear_metrics_for_rule(Id) ->
     ok = emqx_plugin_libs_metrics:clear_metrics(rule_metrics, Id).
@@ -232,13 +240,14 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal Functions
 %%------------------------------------------------------------------------------
 
-do_create_rule(Params = #{id := RuleId, sql := Sql, outputs := Outputs}) ->
+parse_and_insert(Params = #{id := RuleId, sql := Sql, outputs := Outputs}, CreatedAt) ->
     case emqx_rule_sqlparser:parse(Sql) of
         {ok, Select} ->
             Rule = #{
                 id => RuleId,
                 name => maps:get(name, Params, <<"">>),
-                created_at => erlang:system_time(millisecond),
+                created_at => CreatedAt,
+                updated_at => now_ms(),
                 enable => maps:get(enable, Params, true),
                 sql => Sql,
                 outputs => parse_outputs(Outputs),
@@ -259,7 +268,7 @@ do_create_rule(Params = #{id := RuleId, sql := Sql, outputs := Outputs}) ->
 
 do_insert_rule(#{id := Id} = Rule) ->
     ok = load_hooks_for_rule(Rule),
-    ok = add_metrics_for_rule(Id),
+    ok = maybe_add_metrics_for_rule(Id),
     true = ets:insert(?RULE_TAB, {Id, maps:remove(id, Rule)}),
     ok.
 
@@ -286,6 +295,9 @@ get_all_records(Tab) ->
 
 maps_foreach(Fun, Map) ->
     lists:foreach(Fun, maps:to_list(Map)).
+
+now_ms() ->
+    erlang:system_time(millisecond).
 
 bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(B) when is_binary(B) -> B.

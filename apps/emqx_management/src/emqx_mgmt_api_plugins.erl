@@ -88,7 +88,10 @@ schema("/plugins/install") ->
                             properties => #{
                                 plugin => #{type => string, format => binary}}},
                         encoding => #{plugin => #{'contentType' => 'application/gzip'}}}}},
-            responses => #{200 => <<"OK">>}
+            responses => #{
+                200 => <<"OK">>,
+                400 => emqx_dashboard_swagger:error_codes(['UNEXPECTED_ERROR','ALREADY_INSTALLED'])
+            }
         }
     };
 schema("/plugins/:name") ->
@@ -147,7 +150,7 @@ fields(plugin) ->
                 required => true,
                 example => "emqx_plugin_template-5.0-rc.1"})
         },
-        {author, hoconsc:mk(list(string()), #{example => [<<"EMQ X Team">>]})},
+        {author, hoconsc:mk(list(string()), #{example => [<<"EMQX Team">>]})},
         {builder, hoconsc:ref(?MODULE, builder)},
         {built_on_otp_release, hoconsc:mk(string(), #{example => "24"})},
         {compatibility, hoconsc:mk(map(), #{example => #{<<"emqx">> => <<"~>5.0">>}})},
@@ -195,7 +198,7 @@ fields(name) ->
 fields(builder) ->
     [
         {contact, hoconsc:mk(string(), #{example => "emqx-support@emqx.io"})},
-        {name, hoconsc:mk(string(), #{example => "EMQ X Team"})},
+        {name, hoconsc:mk(string(), #{example => "EMQX Team"})},
         {website, hoconsc:mk(string(), #{example => "www.emqx.com"})}
     ];
 fields(position) ->
@@ -263,19 +266,35 @@ upload_install(post, #{body := #{<<"plugin">> := Plugin}}) when is_map(Plugin) -
     %% File bin is too large, we use rpc:multicall instead of cluster_rpc:multicall
     %% TODO what happened when a new node join in?
     %% emqx_plugins_monitor should copy plugins from other core node when boot-up.
+    case emqx_plugins:describe(string:trim(FileName, trailing, ".tar.gz")) of
+        {error, #{error := "bad_info_file", return := {enoent, _}}} ->
+            {AppName, _Vsn} = emqx_plugins:parse_name_vsn(FileName),
+            AppDir = filename:join(emqx_plugins:install_dir(), AppName),
+            case filelib:wildcard(AppDir ++ "*.tar.gz") of
+                [] -> do_install_package(FileName, Bin);
+                OtherVsn ->
+                    {400, #{code => 'ALREADY_INSTALLED',
+                        message => iolist_to_binary(io_lib:format("~p already installed",
+                            [OtherVsn]))}}
+            end;
+        {ok, _} ->
+            {400, #{code => 'ALREADY_INSTALLED',
+                message => iolist_to_binary(io_lib:format("~p is already installed", [FileName]))}}
+    end;
+upload_install(post, #{}) ->
+    {400, #{code => 'BAD_FORM_DATA',
+        message =>
+        <<"form-data should be `plugin=@packagename-vsn.tar.gz;type=application/x-gzip`">>}
+    }.
+
+do_install_package(FileName, Bin) ->
     {Res, _} = emqx_mgmt_api_plugins_proto_v1:install_package(FileName, Bin),
     case lists:filter(fun(R) -> R =/= ok end, Res) of
         [] -> {200};
         [{error, Reason} | _] ->
             {400, #{code => 'UNEXPECTED_ERROR',
                 message => iolist_to_binary(io_lib:format("~p", [Reason]))}}
-    end;
-upload_install(post, #{} = Body) ->
-    io:format("~p~n", [Body]),
-    {400, #{code => 'BAD_FORM_DATA',
-        message =>
-        <<"form-data should be `plugin=@packagename-vsn.tar.gz;type=application/x-gzip`">>}
-    }.
+    end.
 
 plugin(get, #{bindings := #{name := Name}}) ->
     {Plugins, _} = emqx_mgmt_api_plugins_proto_v1:describe_package(Name),
@@ -309,7 +328,6 @@ update_boot_order(post, #{bindings := #{name := Name}, body := Body}) ->
 %% For RPC upload_install/2
 install_package(FileName, Bin) ->
     File = filename:join(emqx_plugins:install_dir(), FileName),
-    io:format("xx:~p~n", [File]),
     ok = file:write_file(File, Bin),
     PackageName = string:trim(FileName, trailing, ".tar.gz"),
     emqx_plugins:ensure_installed(PackageName).
@@ -353,9 +371,13 @@ return(_, {error, Reason}) ->
 parse_position(#{<<"position">> := <<"front">>}, _) -> front;
 parse_position(#{<<"position">> := <<"rear">>}, _) -> rear;
 parse_position(#{<<"position">> := <<"before:", Name/binary>>}, Name) ->
-    {error, <<"Can't before:self">>};
+    {error, <<"Invalid parameter. Cannot be placed before itself">>};
 parse_position(#{<<"position">> := <<"after:", Name/binary>>}, Name) ->
-    {error, <<"Can't after:self">>};
+    {error, <<"Invalid parameter. Cannot be placed after itself">>};
+parse_position(#{<<"position">> := <<"before:">>}, _Name) ->
+    {error, <<"Invalid parameter. Cannot be placed before an empty target">>};
+parse_position(#{<<"position">> := <<"after:">>}, _Name) ->
+    {error, <<"Invalid parameter. Cannot be placed after an empty target">>};
 parse_position(#{<<"position">> := <<"before:", Before/binary>>}, _Name) ->
     {before, binary_to_list(Before)};
 parse_position(#{<<"position">> := <<"after:", After/binary>>}, _Name) ->

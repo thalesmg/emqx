@@ -32,7 +32,7 @@
 
 -reflect_type([duration/0]).
 
--export([namespace/0, roots/0, fields/1, server_config/0]).
+-export([namespace/0, roots/0, fields/1, desc/1, server_config/0]).
 
 namespace() -> exhook.
 
@@ -41,28 +41,56 @@ roots() -> [exhook].
 fields(exhook) ->
     [{servers,
       sc(hoconsc:array(ref(server)),
-          #{default => []})}
+          #{ default => []
+           , desc => "List of exhook servers."
+           })}
     ];
 
 fields(server) ->
-    [ {name, sc(binary(), #{})}
-    , {enable, sc(boolean(), #{default => true})}
-    , {url, sc(binary(), #{})}
-    , {request_timeout,
-       sc(duration(), #{default => "5s"})}
+    [ {name, sc(binary(),
+                #{ desc => "Name of the exhook server."
+                 })}
+    , {enable, sc(boolean(),
+                  #{ default => true
+                   , desc => "Enable the exhook server."
+                   })}
+    , {url, sc(binary(),
+               #{ desc => "URL of the gRPC server."
+                })}
+    , {request_timeout, sc(duration(),
+                           #{ default => "5s"
+                            , desc => "The timeout to request gRPC server."
+                            })}
     , {failed_action, failed_action()}
     , {ssl,
        sc(ref(ssl_conf), #{})}
     , {auto_reconnect,
        sc(hoconsc:union([false, duration()]),
-          #{default => "60s"})}
+          #{ default => "60s"
+           , desc => "Whether to automatically reconnect (initialize) the gRPC server.<br/>"
+                     "When gRPC is not available, exhook tries to request the gRPC service at "
+                     "that interval and reinitialize the list of mounted hooks."
+           })}
     , {pool_size,
-       sc(integer(), #{default => 8, example => 8})}
+       sc(integer(),
+          #{ default => 8
+           , example => 8
+           , desc => "The process pool size for gRPC client."
+           })}
     ];
 
 fields(ssl_conf) ->
     Schema = emqx_schema:client_ssl_opts_schema(#{}),
     lists:keydelete(user_lookup_fun, 1, Schema).
+
+desc(exhook) ->
+    "External hook (exhook) configuration.";
+desc(server) ->
+    "gRPC server configuration.";
+desc(ssl_conf) ->
+    "SSL client configuration.";
+desc(_) ->
+    undefined.
 
 %% types
 sc(Type, Meta) -> Meta#{type => Type}.
@@ -72,7 +100,10 @@ ref(Field) ->
 
 failed_action() ->
     sc(hoconsc:enum([deny, ignore]),
-       #{default => deny}).
+       #{ default => deny
+        , desc => "The value that is returned when the request "
+                  "to the gRPC server fails for any reason."
+        }).
 
 server_config() ->
     fields(server).

@@ -4,11 +4,11 @@ REBAR = $(CURDIR)/rebar3
 BUILD = $(CURDIR)/build
 SCRIPTS = $(CURDIR)/scripts
 export EMQX_RELUP ?= true
-export EMQX_DEFAULT_BUILDER = ghcr.io/emqx/emqx-builder/5.0-8:1.13.3-24.2.1-1-alpine3.14
-export EMQX_DEFAULT_RUNNER = alpine:3.14
+export EMQX_DEFAULT_BUILDER = ghcr.io/emqx/emqx-builder/5.0-10:1.13.3-24.2.1-1-alpine3.15.1
+export EMQX_DEFAULT_RUNNER = alpine:3.15.1
 export OTP_VSN ?= $(shell $(CURDIR)/scripts/get-otp-vsn.sh)
 export ELIXIR_VSN ?= $(shell $(CURDIR)/scripts/get-elixir-vsn.sh)
-export EMQX_DASHBOARD_VERSION ?= v0.23.0
+export EMQX_DASHBOARD_VERSION ?= v0.26.0
 export DOCKERFILE := deploy/docker/Dockerfile
 export EMQX_REL_FORM ?= tgz
 ifeq ($(OS),Windows_NT)
@@ -80,8 +80,8 @@ APPS=$(shell $(CURDIR)/scripts/find-apps.sh)
 ## app/name-ct targets are intended for local tests hence cover is not enabled
 .PHONY: $(APPS:%=%-ct)
 define gen-app-ct-target
-$1-ct: conf-segs
-	@ENABLE_COVER_COMPILE=1 $(REBAR) ct --name $(CT_NODE_NAME) -c -v --suite $(shell $(CURDIR)/scripts/find-suites.sh $1)
+$1-ct: $(REBAR) conf-segs
+	@ENABLE_COVER_COMPILE=1 $(REBAR) ct --name $(CT_NODE_NAME) -c -v --cover_export_name $(subst /,-,$1) --suite $(shell $(CURDIR)/scripts/find-suites.sh $1)
 endef
 $(foreach app,$(APPS),$(eval $(call gen-app-ct-target,$(app))))
 
@@ -193,7 +193,7 @@ $(foreach zt,$(ALL_TGZS),$(eval $(call gen-tgz-target,$(zt))))
 ## A pkg target depend on a regular release
 .PHONY: $(PKG_PROFILES)
 define gen-pkg-target
-$1:
+$1: $(COMMON_DEPS)
 	@$(BUILD) $1 pkg
 endef
 $(foreach pt,$(PKG_PROFILES),$(eval $(call gen-pkg-target,$(pt))))

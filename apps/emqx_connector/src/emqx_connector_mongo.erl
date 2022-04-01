@@ -54,13 +54,15 @@ roots() ->
 
 fields(single) ->
     [ {mongo_type, #{type => single,
-                     default => single}}
+                     default => single,
+                     desc => "Standalone instance."}}
     , {server, fun server/1}
     , {w_mode, fun w_mode/1}
     ] ++ mongo_fields();
 fields(rs) ->
     [ {mongo_type, #{type => rs,
-                     default => rs}}
+                     default => rs,
+                     desc => "Replica set."}}
     , {servers, fun servers/1}
     , {w_mode, fun w_mode/1}
     , {r_mode, fun r_mode/1}
@@ -68,7 +70,8 @@ fields(rs) ->
     ] ++ mongo_fields();
 fields(sharded) ->
     [ {mongo_type, #{type => sharded,
-                     default => sharded}}
+                     default => sharded,
+                     desc => "Sharded cluster."}}
     , {servers, fun servers/1}
     , {w_mode, fun w_mode/1}
     ] ++ mongo_fields();
@@ -298,7 +301,7 @@ server(converter) -> fun to_server_raw/1;
 server(desc) -> ?SERVER_DESC("MongoDB", integer_to_list(?MONGO_DEFAULT_PORT));
 server(_) -> undefined.
 
-servers(type) -> binary();
+servers(type) -> list();
 servers(required) -> true;
 servers(validator) -> [?NOT_EMPTY("the value of the field 'servers' cannot be empty")];
 servers(converter) -> fun to_servers_raw/1;
@@ -306,22 +309,27 @@ servers(desc) -> ?SERVERS_DESC ++ server(desc);
 servers(_) -> undefined.
 
 w_mode(type) -> hoconsc:enum([unsafe, safe]);
+w_mode(desc) -> "Write mode.";
 w_mode(default) -> unsafe;
 w_mode(_) -> undefined.
 
 r_mode(type) -> hoconsc:enum([master, slave_ok]);
+r_mode(desc) -> "Read mode.";
 r_mode(default) -> master;
 r_mode(_) -> undefined.
 
 duration(type) -> emqx_schema:duration_ms();
+duration(desc) -> "Time interval, such as timeout or TTL.";
 duration(required) -> false;
 duration(_) -> undefined.
 
 replica_set_name(type) -> binary();
+replica_set_name(desc) -> "Name of the replica set.";
 replica_set_name(required) -> false;
 replica_set_name(_) -> undefined.
 
 srv_record(type) -> boolean();
+srv_record(desc) -> "Use DNS SRV record.";
 srv_record(default) -> false;
 srv_record(_) -> undefined.
 
@@ -352,7 +360,8 @@ may_parse_srv_and_txt_records_(#{mongo_type := Type,
 
 parse_srv_records(Type, Servers) ->
     Fun = fun(AccIn, {IpOrHost, _Port}) ->
-                  case inet_res:lookup("_mongodb._tcp." ++ ip_or_host_to_string(IpOrHost), in, srv) of
+                  case inet_res:lookup("_mongodb._tcp."
+                                       ++ ip_or_host_to_string(IpOrHost), in, srv) of
                       [] ->
                           error(service_not_found);
                       Services ->
@@ -367,6 +376,10 @@ parse_srv_records(Type, Servers) ->
     end.
 
 parse_txt_records(Type, Servers) ->
+    Fields = case Type of
+                 rs -> ["authSource", "replicaSet"];
+                 _ -> ["authSource"]
+             end,
     Fun = fun(AccIn, {IpOrHost, _Port}) ->
                   case inet_res:lookup(IpOrHost, in, txt) of
                       [] ->
@@ -376,10 +389,6 @@ parse_txt_records(Type, Servers) ->
                               {error, _, _} ->
                                   error({invalid_txt_record, invalid_query_string});
                               Options ->
-                                  Fields = case Type of
-                                               rs -> ["authSource", "replicaSet"];
-                                               _ -> ["authSource"]
-                                           end,
                                   maps:merge(AccIn, take_and_convert(Fields, Options))
                           end;
                       _ ->

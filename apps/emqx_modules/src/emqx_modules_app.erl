@@ -37,9 +37,7 @@ maybe_enable_modules() ->
     RewriteEnabled = length(emqx_conf:get([rewrite], [])) > 0,
     RetainerEnabled = emqx_conf:get([retainer, enable], false),
     AutoSubscribeEnabled = length(emqx_conf:get([auto_subscribe, topics], [])) > 0,
-    application:set_env(
-        emqx_modules,
-        advanced_mqtt_features_in_use,
+    emqx_modules:set_advanced_mqtt_features_in_use(
         #{
             delayed => DelayedEnabled,
             topic_rewrite => RewriteEnabled,
@@ -48,7 +46,7 @@ maybe_enable_modules() ->
         }
     ),
     DelayedEnabled andalso emqx_delayed:enable(),
-    emqx_conf:get([telemetry, enable], true) andalso emqx_telemetry:enable(),
+    emqx_modules_conf:is_telemetry_enabled() andalso emqx_telemetry:enable(),
     emqx_conf:get([observer_cli, enable], true) andalso emqx_observer_cli:enable(),
     emqx_conf_cli:load(),
     ok = emqx_rewrite:enable(),
@@ -57,7 +55,7 @@ maybe_enable_modules() ->
 
 maybe_disable_modules() ->
     emqx_conf:get([delayed, enable], true) andalso emqx_delayed:disable(),
-    emqx_conf:get([telemetry, enable], true) andalso emqx_telemetry:disable(),
+    emqx_modules_conf:is_telemetry_enabled() andalso emqx_telemetry:disable(),
     emqx_conf:get([observer_cli, enable], true) andalso emqx_observer_cli:disable(),
     emqx_rewrite:disable(),
     emqx_conf_cli:unload(),

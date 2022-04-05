@@ -21,7 +21,6 @@
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/logger.hrl").
 
--include_lib("kernel/include/file.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -include("emqx_modules.hrl").
@@ -49,8 +48,7 @@
 
 -export([
     get_uuid/0,
-    get_telemetry/0,
-    get_status/0
+    get_telemetry/0
 ]).
 
 -export([official_version/1]).
@@ -119,9 +117,6 @@ enable() ->
 disable() ->
     gen_server:call(?MODULE, disable).
 
-get_status() ->
-    emqx_conf:get([telemetry, enable], true).
-
 get_uuid() ->
     gen_server:call(?MODULE, get_uuid).
 
@@ -188,12 +183,10 @@ handle_continue(Continue, State) ->
     {noreply, State}.
 
 handle_info({timeout, TRef, time_to_report_telemetry_data}, State0 = #state{timer = TRef}) ->
-    State =
-        case get_status() of
-            true -> report_telemetry(State0);
-            false -> State0
-        end,
+    State = report_telemetry(State0),
     {noreply, ensure_report_timer(State)};
+handle_info({timeout, _TRef, time_to_report_telemetry_data}, State = #state{timer = undefined}) ->
+    {noreply, State};
 handle_info(Info, State) ->
     ?SLOG(error, #{msg => "unexpected_info", info => Info}),
     {noreply, State}.
@@ -348,7 +341,8 @@ get_telemetry(State0 = #state{uuid = UUID}) ->
         {build_info, build_info()},
         {vm_specs, vm_specs()},
         {mqtt_runtime_insights, MQTTRTInsights},
-        {advanced_mqtt_features, advanced_mqtt_features()}
+        {advanced_mqtt_features, advanced_mqtt_features()},
+        {authn_authz, get_authn_authz_info()}
     ]}.
 
 report_telemetry(State0 = #state{url = URL}) ->
@@ -451,6 +445,18 @@ update_mqtt_rates(State) ->
 advanced_mqtt_features() ->
     AdvancedFeatures = emqx_modules:get_advanced_mqtt_features_in_use(),
     maps:map(fun(_K, V) -> bool2int(V) end, AdvancedFeatures).
+
+get_authn_authz_info() ->
+    #{
+        authenticators := AuthnTypes,
+        overridden_listeners := OverriddenListeners
+    } = emqx_authn:get_enabled_authns(),
+    AuthzTypes = emqx_authz:get_enabled_authzs(),
+    #{
+        authn => AuthnTypes,
+        authn_listener => OverriddenListeners,
+        authz => AuthzTypes
+    }.
 
 bin(L) when is_list(L) ->
     list_to_binary(L);

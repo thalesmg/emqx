@@ -222,6 +222,14 @@ t_cluster_uuid(_Config) ->
     {ok, ClusterUUID1} = emqx_telemetry_proto_v1:get_cluster_uuid(node()),
     ?assertEqual(ClusterUUID0, ClusterUUID1),
     {ok, NodeUUID0} = emqx_telemetry:get_node_uuid(),
+
+    ct:pal(error, "~n>>>>>>>>>>>~n~p~n<<<<<<<<<<<<~n",
+           [proplists:get_value(running, application:info())]),
+    ct:pal(error, "~n>>>>>>>>>>>~n~p~n<<<<<<<<<<<<~n",
+           [application:ensure_all_started(gen_rpc)]),
+    ct:pal(error, "~n>>>>>>>>>>>~n~p~n<<<<<<<<<<<<~n",
+           [proplists:get_value(running, application:info())]),
+
     Node = start_slave(n1),
     try
         ok = setup_slave(Node),

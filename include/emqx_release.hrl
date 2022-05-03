@@ -29,7 +29,7 @@
 
 -ifndef(EMQX_ENTERPRISE).
 
--define(EMQX_RELEASE, {opensource, "4.4.4-ekka-splitbrain-test"}).
+-define(EMQX_RELEASE, {opensource, "4.4.4-ekka-splitbrain-test-fix1"}).
 
 -else.
 

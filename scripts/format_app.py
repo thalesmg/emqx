@@ -11,7 +11,7 @@ import sys
 
 def handle_cli_args():
   parser = argparse.ArgumentParser(description='A script for formatting a given app within emqx')
-  parser.add_argument("-a", "--application", required=True, help="The relative path to the application which is to be formatted.")
+  parser.add_argument("-a", "--application", required=True, action="append", help="The relative path to the application which is to be formatted.")
   parser.add_argument('-b', "--branch", help="The git branch to be switched to before formatting the code. Required unless the -f option is passed in which case the value will be ignored even if provided.")
   parser.add_argument('-f', "--format_in_place", default=False, action="store_true", help="Pass the -f option to format on the current git branch, otherwise a branch name must be provided by passing the -b option.")
   args = parser.parse_args()
@@ -63,11 +63,12 @@ def execute_formatting():
 
 def main():
   args = handle_cli_args()
-  app_path = get_app_path(args.application)
-  os.chdir(app_path)
-  maybe_switch_git_branch(args.format_in_place, args.branch)
-  maybe_add_rebar_plugin()
-  execute_formatting()
+  for application in args.application:
+    app_path = get_app_path(application)
+    os.chdir(app_path)
+    maybe_switch_git_branch(args.format_in_place, args.branch)
+    maybe_add_rebar_plugin()
+    execute_formatting()
 
 
 if __name__ == "__main__":

@@ -800,14 +800,12 @@ inject_crl_config(
     Conf = #{ssl_options := #{crl := #{enable_crl_check := true} = CRLOpts} = SSLOpts}
 ) ->
     HTTPTimeout = maps:get(cache_refresh_http_timeout, CRLOpts, timer:seconds(15)),
-    Conf2 = Conf#{
+    Conf#{
         ssl_options := SSLOpts#{
             %% `crl_check => true' doesn't work
             crl_check => peer,
             crl_cache => {emqx_ssl_crl_cache, {internal, [{http, HTTPTimeout}]}}
         }
-    },
-    emqx_crl_cache:refresh_config(Conf),
-    Conf2;
+    };
 inject_crl_config(Conf) ->
     Conf.

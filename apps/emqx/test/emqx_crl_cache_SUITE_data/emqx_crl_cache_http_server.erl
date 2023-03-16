@@ -59,7 +59,7 @@ init(Req, #{parent := Parent} = State) ->
     %% assert
     <<"GET">> = cowboy_req:method(Req),
     [{crl, CRLPem}] = ets:lookup(?MODULE, crl),
-    Parent ! http_get,
+    Parent ! {http_get, iolist_to_binary(cowboy_req:uri(Req))},
     Reply = reply(Req, CRLPem),
     {ok, Reply, State}.
 

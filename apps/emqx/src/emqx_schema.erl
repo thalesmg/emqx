@@ -809,6 +809,7 @@ fields("crl_cache") ->
             sc(
                 duration(),
                 #{
+                    hidden => true,
                     default => <<"15m">>,
                     desc => ?DESC("crl_cache_refresh_interval")
                 }
@@ -817,8 +818,18 @@ fields("crl_cache") ->
             sc(
                 duration(),
                 #{
+                    hidden => true,
                     default => <<"15s">>,
                     desc => ?DESC("crl_cache_refresh_http_timeout")
+                }
+            )},
+        {"capacity",
+            sc(
+                pos_integer(),
+                #{
+                    hidden => true,
+                    default => 100,
+                    desc => ?DESC("crl_cache_capacity")
                 }
             )}
     ];
@@ -1377,14 +1388,6 @@ fields("crl") ->
                 #{
                     default => false,
                     desc => ?DESC("server_ssl_opts_schema_enable_crl_check")
-                }
-            )},
-        {"cache_urls",
-            sc(
-                list(binary()),
-                #{
-                    default => <<"[]">>,
-                    desc => ?DESC("server_ssl_opts_schema_crl_cache_urls")
                 }
             )}
     ];

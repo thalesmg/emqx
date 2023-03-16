@@ -177,7 +177,7 @@ http_get(URL, Rest, CRLDbInfo, Timeout) ->
             case Body of
                 <<"-----BEGIN", _/binary>> ->
                     Pem = public_key:pem_decode(Body),
-                    lists:filtermap(
+                    CRLs = lists:filtermap(
                         fun
                             ({'CertificateList', CRL, not_encrypted}) ->
                                 {true, CRL};
@@ -185,11 +185,15 @@ http_get(URL, Rest, CRLDbInfo, Timeout) ->
                                 false
                         end,
                         Pem
-                    );
+                    ),
+                    emqx_crl_cache:register_der_crls(URL, CRLs),
+                    CRLs;
                 _ ->
                     try public_key:der_decode('CertificateList', Body) of
                         _ ->
-                            [Body]
+                            CRLs = [Body],
+                            emqx_crl_cache:register_der_crls(URL, CRLs),
+                            CRLs
                     catch
                         _:_ ->
                             get_crls(Rest, CRLDbInfo)

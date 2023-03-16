@@ -22,10 +22,9 @@
 -export([
     start_link/0,
     start_link/1,
+    register_der_crls/2,
     refresh/1,
-    evict/1,
-    refresh_config/0,
-    refresh_config/1
+    evict/1
 ]).
 
 %% gen_server callbacks
@@ -52,14 +51,23 @@
 -define(MIN_REFRESH_PERIOD, timer:minutes(1)).
 -endif.
 -define(DEFAULT_REFRESH_INTERVAL, timer:minutes(15)).
+-define(DEFAULT_CACHE_CAPACITY, 100).
 
 -record(state, {
     refresh_timers = #{} :: #{binary() => timer:tref()},
     refresh_interval = timer:minutes(15) :: timer:time(),
     http_timeout = ?HTTP_TIMEOUT :: timer:time(),
+    %% keeps track of URLs by insertion time
+    insertion_times = gb_trees:empty() :: gb_trees:tree(timer:time(), url()),
+    %% the set of cached URLs, for testing if an URL is already
+    %% registered.
+    cached_urls = sets:new([{version, 2}]) :: sets:set(url()),
+    cache_capacity = 100 :: pos_integer(),
     %% for future use
     extra = #{} :: map()
 }).
+-type url() :: uri_string:uri_string().
+-type state() :: #state{}.
 
 %%--------------------------------------------------------------------
 %% API
@@ -69,23 +77,22 @@ start_link() ->
     Config = gather_config(),
     start_link(Config).
 
-start_link(Config = #{urls := _, refresh_interval := _, http_timeout := _}) ->
+start_link(Config = #{cache_capacity := _, refresh_interval := _, http_timeout := _}) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Config, []).
 
+-spec refresh(url()) -> ok.
 refresh(URL) ->
     gen_server:cast(?MODULE, {refresh, URL}).
 
+-spec evict(url()) -> ok.
 evict(URL) ->
     gen_server:cast(?MODULE, {evict, URL}).
 
-%% to pick up changes from the config
--spec refresh_config() -> ok.
-refresh_config() ->
-    gen_server:cast(?MODULE, refresh_config).
-
--spec refresh_config(map()) -> ok.
-refresh_config(Config) ->
-    gen_server:cast(?MODULE, {refresh_config, Config}).
+%% Adds CRLs in DER format to the cache and register them for periodic
+%% refresh.
+-spec register_der_crls(url(), [public_key:der_encoded()]) -> ok.
+register_der_crls(URL, CRLs) when is_list(CRLs) ->
+    gen_server:cast(?MODULE, {register_der_crls, URL, CRLs}).
 
 %%--------------------------------------------------------------------
 %% gen_server behaviour
@@ -93,18 +100,15 @@ refresh_config(Config) ->
 
 init(Config) ->
     #{
-        urls := URLs,
+        cache_capacity := CacheCapacity,
         refresh_interval := RefreshIntervalMS,
         http_timeout := HTTPTimeoutMS
     } = Config,
-    State = lists:foldl(
-        fun(URL, Acc) -> ensure_timer(URL, Acc, 0) end,
-        #state{
-            refresh_interval = RefreshIntervalMS,
-            http_timeout = HTTPTimeoutMS
-        },
-        URLs
-    ),
+    State = #state{
+        cache_capacity = CacheCapacity,
+        refresh_interval = RefreshIntervalMS,
+        http_timeout = HTTPTimeoutMS
+    },
     {ok, State}.
 
 handle_call(Call, _From, State) ->
@@ -121,6 +125,8 @@ handle_cast({evict, URL}, State0 = #state{refresh_timers = RefreshTimers0}) ->
         #{url => URL}
     ),
     {noreply, State};
+handle_cast({register_der_crls, URL, CRLs}, State0) ->
+    handle_register_der_crls(State0, URL, CRLs);
 handle_cast({refresh, URL}, State0) ->
     case do_http_fetch_and_cache(URL, State0#state.http_timeout) of
         {error, Error} ->
@@ -138,10 +144,6 @@ handle_cast({refresh, URL}, State0) ->
             }),
             {noreply, ensure_timer(URL, State0)}
     end;
-handle_cast(refresh_config, State0) ->
-    handle_refresh_config(_ReceivedConfig = undefined, State0);
-handle_cast({refresh_config, ReceivedConfig}, State0) ->
-    handle_refresh_config(ReceivedConfig, State0);
 handle_cast(_Cast, State) ->
     {noreply, State}.
 
@@ -164,11 +166,7 @@ handle_info(
                     }),
                     {noreply, ensure_timer(URL, State, ?RETRY_TIMEOUT)};
                 {ok, _CRLs} ->
-                    ?SLOG(debug, #{
-                        msg => "fetched_crl_response",
-                        url => URL
-                    }),
-                    ?tp(crl_refresh_timer_done, #{url => URL}),
+                    ?tp(debug, crl_refresh_timer_done, #{url => URL}),
                     {noreply, ensure_timer(URL, State)}
             end;
         _ ->
@@ -234,76 +232,81 @@ ensure_timer(URL, State = #state{refresh_timers = RefreshTimers0}, Timeout) ->
     },
     State#state{refresh_timers = RefreshTimers}.
 
-collect_urls(TLSListeners) ->
-    URLs = [
-        URL
-     || {_Name, #{
-            ssl_options :=
-                #{
-                    crl :=
-                        #{
-                            enable_crl_check := true,
-                            cache_urls := CacheURLs
-                        }
-                }
-        }} <-
-            maps:to_list(TLSListeners),
-        URL <- CacheURLs
-    ],
-    lists:usort(URLs).
-
 -spec gather_config() ->
     #{
-        urls := [binary()],
+        cache_capacity := pos_integer(),
         refresh_interval := timer:time(),
         http_timeout := timer:time()
     }.
 gather_config() ->
-    TLSListeners = emqx_config:get([listeners, ssl], #{}),
-    URLs = collect_urls(TLSListeners),
     %% TODO: add a config handler to refresh the config when those
     %% globals change?
+    CacheCapacity = emqx_config:get([crl_cache, capacity], ?DEFAULT_CACHE_CAPACITY),
     RefreshIntervalMS0 = emqx_config:get([crl_cache, refresh_interval], ?DEFAULT_REFRESH_INTERVAL),
     MinimumRefreshInverval = ?MIN_REFRESH_PERIOD,
     RefreshIntervalMS = max(RefreshIntervalMS0, MinimumRefreshInverval),
     HTTPTimeoutMS = emqx_config:get([crl_cache, http_timeout], ?HTTP_TIMEOUT),
     #{
-        urls => URLs,
+        cache_capacity => CacheCapacity,
         refresh_interval => RefreshIntervalMS,
         http_timeout => HTTPTimeoutMS
     }.
 
-handle_refresh_config(_ReceivedConfig = undefined, State0) ->
-    #{
-        urls := URLs,
-        http_timeout := HTTPTimeoutMS,
-        refresh_interval := RefreshIntervalMS
-    } = gather_config(),
-    do_handle_refresh_config(URLs, HTTPTimeoutMS, RefreshIntervalMS, State0);
-handle_refresh_config(_ReceivedConfig = #{ssl_options := #{crl := #{cache_urls := URLs}}}, State0) ->
-    #{
-        http_timeout := HTTPTimeoutMS,
-        refresh_interval := RefreshIntervalMS
-    } = gather_config(),
-    do_handle_refresh_config(URLs, HTTPTimeoutMS, RefreshIntervalMS, State0);
-handle_refresh_config(_ReceivedConfig, State0) ->
-    {noreply, State0}.
+-spec handle_register_der_crls(state(), url(), [public_key:der_encoded()]) -> {noreply, state()}.
+handle_register_der_crls(State0, URL0, CRLs) ->
+    #state{cached_urls = CachedURLs0} = State0,
+    URL = to_string(URL0),
+    case sets:is_element(URL, CachedURLs0) of
+        true ->
+            {noreply, State0};
+        false ->
+            emqx_ssl_crl_cache:insert(URL, {der, CRLs}),
+            ?tp(new_crl_url_inserted, #{url => URL}),
+            State1 = do_register_url(State0, URL),
+            State2 = handle_cache_overflow(State1),
+            State = ensure_timer(URL, State2),
+            {noreply, State}
+    end.
 
-do_handle_refresh_config(URLs, HTTPTimeoutMS, RefreshIntervalMS, State0) ->
-    State = lists:foldl(
-        fun(URL, Acc) -> ensure_timer(URL, Acc, 0) end,
-        State0#state{
-            refresh_interval = RefreshIntervalMS,
-            http_timeout = HTTPTimeoutMS
-        },
-        URLs
-    ),
-    ?tp(crl_cache_refresh_config, #{
-        refresh_interval => RefreshIntervalMS,
-        http_timeout => HTTPTimeoutMS,
-        urls => URLs
-    }),
-    {noreply, State}.
+-spec do_register_url(state(), url()) -> state().
+do_register_url(State0, URL) ->
+    #state{
+        cached_urls = CachedURLs0,
+        insertion_times = InsertionTimes0
+    } = State0,
+    Now = erlang:monotonic_time(),
+    CachedURLs = sets:add_element(URL, CachedURLs0),
+    InsertionTimes = gb_trees:enter(Now, URL, InsertionTimes0),
+    State0#state{
+        cached_urls = CachedURLs,
+        insertion_times = InsertionTimes
+    }.
+
+-spec handle_cache_overflow(state()) -> state().
+handle_cache_overflow(State0) ->
+    #state{
+        cached_urls = CachedURLs0,
+        insertion_times = InsertionTimes0,
+        cache_capacity = CacheCapacity,
+        refresh_timers = RefreshTimers0
+    } = State0,
+    case sets:size(CachedURLs0) > CacheCapacity of
+        false ->
+            State0;
+        true ->
+            {_Time, OldestURL, InsertionTimes} = gb_trees:take_smallest(InsertionTimes0),
+            emqx_ssl_crl_cache:delete(OldestURL),
+            MTimer = maps:get(OldestURL, RefreshTimers0, undefined),
+            emqx_misc:cancel_timer(MTimer),
+            RefreshTimers = maps:remove(OldestURL, RefreshTimers0),
+            CachedURLs = sets:del_element(OldestURL, CachedURLs0),
+            ?tp(crl_cache_overflow, #{oldest_url => OldestURL}),
+            State0#state{
+                insertion_times = InsertionTimes,
+                cached_urls = CachedURLs,
+                refresh_timers = RefreshTimers
+            }
+    end.
 
 to_string(B) when is_binary(B) ->
     binary_to_list(B);

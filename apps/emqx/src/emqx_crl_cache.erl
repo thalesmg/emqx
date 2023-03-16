@@ -111,7 +111,7 @@ handle_call(Call, _From, State) ->
     {reply, {error, {bad_call, Call}}, State}.
 
 handle_cast({evict, URL}, State0 = #state{refresh_timers = RefreshTimers0}) ->
-    ssl_crl_cache:delete(URL),
+    emqx_ssl_crl_cache:delete(URL),
     MTimer = maps:get(URL, RefreshTimers0, undefined),
     emqx_misc:cancel_timer(MTimer),
     RefreshTimers = maps:without([URL], RefreshTimers0),
@@ -201,7 +201,7 @@ do_http_fetch_and_cache(URL, HTTPTimeoutMS) ->
                     %% Note: must ensure it's a string and not a
                     %% binary because that's what the ssl manager uses
                     %% when doing lookups.
-                    ssl_crl_cache:insert(to_string(URL), {der, CRLs}),
+                    emqx_ssl_crl_cache:insert(to_string(URL), {der, CRLs}),
                     ?tp(crl_cache_insert, #{url => URL, crls => CRLs}),
                     {ok, CRLs}
             end;

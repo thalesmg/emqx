@@ -804,7 +804,7 @@ inject_crl_config(
         ssl_options := SSLOpts#{
             %% `crl_check => true' doesn't work
             crl_check => peer,
-            crl_cache => {ssl_crl_cache, {internal, [{http, HTTPTimeout}]}}
+            crl_cache => {emqx_ssl_crl_cache, {internal, [{http, HTTPTimeout}]}}
         }
     },
     emqx_crl_cache:refresh_config(Conf),

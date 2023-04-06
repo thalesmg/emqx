@@ -14,7 +14,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_authn_mongo_SUITE).
+-module(emqx_mongo_authn_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).
@@ -25,9 +25,10 @@
 -include_lib("common_test/include/ct.hrl").
 
 -define(MONGO_HOST, "mongo").
--define(MONGO_CLIENT, 'emqx_authn_mongo_SUITE_client').
+-define(MONGO_CLIENT, 'emqx_mongo_authn_SUITE_client').
 
 -define(PATH, [authentication]).
+-define(APPS, [emqx_authn, emqx_mongo]).
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
@@ -49,7 +50,7 @@ init_per_suite(Config) ->
     _ = application:load(emqx_conf),
     case emqx_common_test_helpers:is_tcp_server_available(?MONGO_HOST, ?MONGO_DEFAULT_PORT) of
         true ->
-            ok = emqx_common_test_helpers:start_apps([emqx_authn]),
+            ok = emqx_common_test_helpers:start_apps(?APPS),
             ok = start_apps([emqx_resource]),
             Config;
         false ->
@@ -62,7 +63,7 @@ end_per_suite(_Config) ->
         ?GLOBAL
     ),
     ok = stop_apps([emqx_resource]),
-    ok = emqx_common_test_helpers:stop_apps([emqx_authn]).
+    ok = emqx_common_test_helpers:stop_apps(lists:reverse(?APPS)).
 
 %%------------------------------------------------------------------------------
 %% Tests
@@ -76,7 +77,7 @@ t_create(_Config) ->
         {create_authenticator, ?GLOBAL, AuthConfig}
     ),
 
-    {ok, [#{provider := emqx_authn_mongodb}]} = emqx_authentication:list_authenticators(?GLOBAL).
+    {ok, [#{provider := emqx_mongo_authn}]} = emqx_authentication:list_authenticators(?GLOBAL).
 
 t_create_invalid(_Config) ->
     AuthConfig = raw_mongo_auth_config(),
@@ -146,10 +147,10 @@ t_destroy(_Config) ->
         {create_authenticator, ?GLOBAL, AuthConfig}
     ),
 
-    {ok, [#{provider := emqx_authn_mongodb, state := State}]} =
+    {ok, [#{provider := emqx_mongo_authn, state := State}]} =
         emqx_authentication:list_authenticators(?GLOBAL),
 
-    {ok, _} = emqx_authn_mongodb:authenticate(
+    {ok, _} = emqx_mongo_authn:authenticate(
         #{
             username => <<"plain">>,
             password => <<"plain">>
@@ -165,7 +166,7 @@ t_destroy(_Config) ->
     % Authenticator should not be usable anymore
     ?assertMatch(
         ignore,
-        emqx_authn_mongodb:authenticate(
+        emqx_mongo_authn:authenticate(
             #{
                 username => <<"plain">>,
                 password => <<"plain">>

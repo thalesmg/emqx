@@ -14,7 +14,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_authn_mongo_tls_SUITE).
+-module(emqx_mongo_authn_tls_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).
@@ -64,7 +64,7 @@ end_per_suite(_Config) ->
 %% Tests
 %%------------------------------------------------------------------------------
 
-%% emqx_connector_mongo connects asynchronously,
+%% emqx_mongo_connector connects asynchronously,
 %% so we check failure/success indirectly (through snabbkaffe).
 
 %% openssl s_client -tls1_2 -cipher ECDHE-RSA-AES256-GCM-SHA384 \
@@ -86,7 +86,7 @@ t_create(_Config) ->
                 [ok | _],
                 ?projection(
                     status,
-                    ?of_kind(emqx_connector_mongo_health_check, Trace)
+                    ?of_kind(emqx_mongo_connector_health_check, Trace)
                 )
             )
         end
@@ -105,7 +105,7 @@ t_create_invalid_server_name(_Config) ->
                 [ok],
                 ?projection(
                     status,
-                    ?of_kind(emqx_connector_mongo_health_check, Trace)
+                    ?of_kind(emqx_mongo_connector_health_check, Trace)
                 )
             )
         end
@@ -128,7 +128,7 @@ t_create_invalid_version(_Config) ->
                 [ok],
                 ?projection(
                     status,
-                    ?of_kind(emqx_connector_mongo_health_check, Trace)
+                    ?of_kind(emqx_mongo_connector_health_check, Trace)
                 )
             )
         end
@@ -152,7 +152,7 @@ t_invalid_ciphers(_Config) ->
                 [ok],
                 ?projection(
                     status,
-                    ?of_kind(emqx_connector_mongo_health_check, Trace)
+                    ?of_kind(emqx_mongo_connector_health_check, Trace)
                 )
             )
         end

@@ -22,7 +22,7 @@
 -define(ERR(Reason), {error, Reason}).
 
 union_member_selector_mongo_test_() ->
-    Check = fun(Txt) -> check(emqx_authn_mongodb, Txt) end,
+    Check = fun(Txt) -> check(emqx_mongo_authn, Txt) end,
     [
         {"unknown", fun() ->
             ?assertMatch(

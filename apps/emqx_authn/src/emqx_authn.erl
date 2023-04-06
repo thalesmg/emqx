@@ -31,7 +31,7 @@ providers() ->
         {{password_based, built_in_database}, emqx_authn_mnesia},
         {{password_based, mysql}, emqx_authn_mysql},
         {{password_based, postgresql}, emqx_authn_pgsql},
-        {{password_based, mongodb}, emqx_authn_mongodb},
+        {{password_based, mongodb}, emqx_mongo_authn},
         {{password_based, redis}, emqx_authn_redis},
         {{password_based, http}, emqx_authn_http},
         {jwt, emqx_authn_jwt},

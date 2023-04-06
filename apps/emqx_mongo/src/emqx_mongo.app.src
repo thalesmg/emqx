@@ -1,0 +1,13 @@
+%% -*- mode: erlang -*-
+{application, emqx_mongo, [
+    {description, "EMQX Mongo Integration"},
+    {vsn, "0.1.0"},
+    {modules, []},
+    {registered, []},
+    {applications, [kernel, stdlib, emqx_resource]},
+    %% {mod, {emqx_mongo_app, []}},
+    {env, []},
+    {licenses, ["Apache-2.0"]},
+    {maintainers, ["EMQX Team <contact@emqx.io>"]},
+    {links, [{"Homepage", "https://emqx.io/"}]}
+]}.

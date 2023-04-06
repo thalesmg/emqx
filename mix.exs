@@ -279,6 +279,7 @@ defmodule EMQXUmbrella.MixProject do
         emqx_connector: :permanent,
         emqx_authn: :permanent,
         emqx_authz: :permanent,
+        emqx_mongo: :permanent,
         emqx_auto_subscribe: :permanent,
         emqx_gateway: :permanent,
         emqx_exhook: :permanent,

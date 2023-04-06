@@ -26,12 +26,12 @@
 %% `emqx_resource' API
 %%========================================================================================
 
-callback_mode() -> emqx_connector_mongo:callback_mode().
+callback_mode() -> emqx_mongo_connector:callback_mode().
 
 is_buffer_supported() -> false.
 
 on_start(InstanceId, Config) ->
-    case emqx_connector_mongo:on_start(InstanceId, Config) of
+    case emqx_mongo_connector:on_start(InstanceId, Config) of
         {ok, ConnectorState} ->
             PayloadTemplate0 = maps:get(payload_template, Config, undefined),
             PayloadTemplate = preprocess_template(PayloadTemplate0),
@@ -48,7 +48,7 @@ on_start(InstanceId, Config) ->
     end.
 
 on_stop(InstanceId, _State = #{connector_state := ConnectorState}) ->
-    emqx_connector_mongo:on_stop(InstanceId, ConnectorState).
+    emqx_mongo_connector:on_stop(InstanceId, ConnectorState).
 
 on_query(InstanceId, {send_message, Message0}, State) ->
     #{
@@ -60,14 +60,14 @@ on_query(InstanceId, {send_message, Message0}, State) ->
         collection => emqx_plugin_libs_rule:proc_tmpl(CollectionTemplate, Message0)
     },
     Message = render_message(PayloadTemplate, Message0),
-    Res = emqx_connector_mongo:on_query(InstanceId, {send_message, Message}, NewConnectorState),
+    Res = emqx_mongo_connector:on_query(InstanceId, {send_message, Message}, NewConnectorState),
     ?tp(mongo_ee_connector_on_query_return, #{result => Res}),
     Res;
 on_query(InstanceId, Request, _State = #{connector_state := ConnectorState}) ->
-    emqx_connector_mongo:on_query(InstanceId, Request, ConnectorState).
+    emqx_mongo_connector:on_query(InstanceId, Request, ConnectorState).
 
 on_get_status(InstanceId, _State = #{connector_state := ConnectorState}) ->
-    emqx_connector_mongo:on_get_status(InstanceId, ConnectorState).
+    emqx_mongo_connector:on_get_status(InstanceId, ConnectorState).
 
 %%========================================================================================
 %% Helper fns

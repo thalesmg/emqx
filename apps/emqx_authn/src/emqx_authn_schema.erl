@@ -109,7 +109,7 @@ try_select_union_member(Module, Value) ->
     %% the sub-types, they are:
     %%   emqx_authn_http
     %%   emqx_authn_jwt
-    %%   emqx_authn_mongodb
+    %%   emqx_mongo_authn
     %%   emqx_authn_redis
     try
         Module:union_member_selector({value, Value})

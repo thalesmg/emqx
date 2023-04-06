@@ -58,13 +58,13 @@ fields(built_in_database) ->
     authz_common_fields(built_in_database);
 fields(mongo_single) ->
     authz_mongo_common_fields() ++
-        emqx_connector_mongo:fields(single);
+        emqx_mongo_connector:fields(single);
 fields(mongo_rs) ->
     authz_mongo_common_fields() ++
-        emqx_connector_mongo:fields(rs);
+        emqx_mongo_connector:fields(rs);
 fields(mongo_sharded) ->
     authz_mongo_common_fields() ++
-        emqx_connector_mongo:fields(sharded);
+        emqx_mongo_connector:fields(sharded);
 fields(mysql) ->
     authz_common_fields(mysql) ++
         [{query, query()}] ++

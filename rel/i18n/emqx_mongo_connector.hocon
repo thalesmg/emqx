@@ -1,4 +1,4 @@
-emqx_connector_mongo {
+emqx_mongo_connector {
 
     single_mongo_type {
         desc {

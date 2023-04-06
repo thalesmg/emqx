@@ -1,4 +1,4 @@
-emqx_authn_mongodb {
+emqx_mongo_authn {
   standalone {
     desc {
       en: """Configuration of authenticator using MongoDB (Standalone) as authentication data source."""

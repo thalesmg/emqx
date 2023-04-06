@@ -13,9 +13,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%--------------------------------------------------------------------
--module(emqx_connector_mongo).
+-module(emqx_mongo_connector).
 
--include("emqx_connector.hrl").
+-include_lib("emqx_connector/include/emqx_connector.hrl").
 -include_lib("typerefl/include/types.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("emqx/include/logger.hrl").
@@ -267,13 +267,13 @@ on_query(
 on_get_status(InstId, #{poolname := PoolName} = _State) ->
     case health_check(PoolName) of
         true ->
-            ?tp(debug, emqx_connector_mongo_health_check, #{
+            ?tp(debug, emqx_mongo_connector_health_check, #{
                 instance_id => InstId,
                 status => ok
             }),
             connected;
         false ->
-            ?tp(warning, emqx_connector_mongo_health_check, #{
+            ?tp(warning, emqx_mongo_connector_health_check, #{
                 instance_id => InstId,
                 status => failed
             }),

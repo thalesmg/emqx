@@ -40,11 +40,11 @@ fields("config") ->
         {payload_template, mk(binary(), #{required => false, desc => ?DESC("payload_template")})}
     ] ++ emqx_resource_schema:fields("resource_opts");
 fields(mongodb_rs) ->
-    emqx_connector_mongo:fields(rs) ++ fields("config");
+    emqx_mongo_connector:fields(rs) ++ fields("config");
 fields(mongodb_sharded) ->
-    emqx_connector_mongo:fields(sharded) ++ fields("config");
+    emqx_mongo_connector:fields(sharded) ++ fields("config");
 fields(mongodb_single) ->
-    emqx_connector_mongo:fields(single) ++ fields("config");
+    emqx_mongo_connector:fields(single) ++ fields("config");
 fields("post_rs") ->
     fields(mongodb_rs) ++ type_and_name_fields(mongodb_rs);
 fields("post_sharded") ->

@@ -446,6 +446,8 @@ find_action_in_hooks() ->
 
 authz_module(built_in_database) ->
     emqx_authz_mnesia;
+authz_module(mongodb) ->
+    emqx_mongo_authz;
 authz_module(Type) ->
     list_to_existing_atom("emqx_authz_" ++ atom_to_list(Type)).
 

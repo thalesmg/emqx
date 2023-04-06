@@ -387,6 +387,7 @@ relx_apps(ReleaseType, Edition) ->
             emqx_connector,
             emqx_authn,
             emqx_authz,
+            emqx_mongo,
             emqx_auto_subscribe,
             emqx_gateway,
             emqx_exhook,

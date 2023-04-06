@@ -14,9 +14,9 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_authn_mongodb).
+-module(emqx_mongo_authn).
 
--include("emqx_authn.hrl").
+-include_lib("emqx_authn/include/emqx_authn.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 
@@ -59,11 +59,11 @@ roots() ->
     ].
 
 fields(standalone) ->
-    common_fields() ++ emqx_connector_mongo:fields(single);
+    common_fields() ++ emqx_mongo_connector:fields(single);
 fields('replica-set') ->
-    common_fields() ++ emqx_connector_mongo:fields(rs);
+    common_fields() ++ emqx_mongo_connector:fields(rs);
 fields('sharded-cluster') ->
-    common_fields() ++ emqx_connector_mongo:fields(sharded).
+    common_fields() ++ emqx_mongo_connector:fields(sharded).
 
 desc(standalone) ->
     ?DESC(standalone);
@@ -139,14 +139,14 @@ create(Config0) ->
     {Config, State} = parse_config(Config0),
     {ok, _Data} = emqx_authn_utils:create_resource(
         ResourceId,
-        emqx_connector_mongo,
+        emqx_mongo_connector,
         Config
     ),
     {ok, State#{resource_id => ResourceId}}.
 
 update(Config0, #{resource_id := ResourceId} = _State) ->
     {Config, NState} = parse_config(Config0),
-    case emqx_authn_utils:update_resource(emqx_connector_mongo, Config, ResourceId) of
+    case emqx_authn_utils:update_resource(emqx_mongo_connector, Config, ResourceId) of
         {error, Reason} ->
             error({load_config_error, Reason});
         {ok, _} ->

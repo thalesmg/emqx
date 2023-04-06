@@ -13,7 +13,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_authz_mongodb_SUITE).
+-module(emqx_mongo_authz_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).
@@ -25,7 +25,8 @@
 -include_lib("emqx/include/emqx_placeholder.hrl").
 
 -define(MONGO_HOST, "mongo").
--define(MONGO_CLIENT, 'emqx_authz_mongo_SUITE_client').
+-define(MONGO_CLIENT, 'emqx_mongo_authz_SUITE_client').
+-define(APPS, [emqx_conf, emqx_authz, emqx_mongo]).
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
@@ -38,7 +39,7 @@ init_per_suite(Config) ->
     case emqx_common_test_helpers:is_tcp_server_available(?MONGO_HOST, ?MONGO_DEFAULT_PORT) of
         true ->
             ok = emqx_common_test_helpers:start_apps(
-                [emqx_conf, emqx_authz],
+                ?APPS,
                 fun set_special_configs/1
             ),
             ok = start_apps([emqx_resource]),
@@ -50,7 +51,7 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok = emqx_authz_test_lib:restore_authorizers(),
     ok = stop_apps([emqx_resource]),
-    ok = emqx_common_test_helpers:stop_apps([emqx_conf, emqx_authz]).
+    ok = emqx_common_test_helpers:stop_apps(lists:reverse(?APPS)).
 
 set_special_configs(emqx_authz) ->
     ok = emqx_authz_test_lib:reset_authorizers();

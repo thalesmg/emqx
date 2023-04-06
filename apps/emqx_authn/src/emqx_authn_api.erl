@@ -853,7 +853,7 @@ resource_provider() ->
     [
         emqx_authn_mysql,
         emqx_authn_pgsql,
-        emqx_authn_mongodb,
+        emqx_mongo_authn,
         emqx_authn_redis,
         emqx_authn_http
     ].

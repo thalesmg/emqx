@@ -14,9 +14,9 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_authz_mongodb).
+-module(emqx_mongo_authz).
 
--include("emqx_authz.hrl").
+-include_lib("emqx_authz/include/emqx_authz.hrl").
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_placeholder.hrl").
@@ -50,13 +50,13 @@ description() ->
 
 create(#{filter := Filter} = Source) ->
     ResourceId = emqx_authz_utils:make_resource_id(?MODULE),
-    {ok, _Data} = emqx_authz_utils:create_resource(ResourceId, emqx_connector_mongo, Source),
+    {ok, _Data} = emqx_authz_utils:create_resource(ResourceId, emqx_mongo_connector, Source),
     FilterTemp = emqx_authz_utils:parse_deep(Filter, ?PLACEHOLDERS),
     Source#{annotations => #{id => ResourceId}, filter_template => FilterTemp}.
 
 update(#{filter := Filter} = Source) ->
     FilterTemp = emqx_authz_utils:parse_deep(Filter, ?PLACEHOLDERS),
-    case emqx_authz_utils:update_resource(emqx_connector_mongo, Source) of
+    case emqx_authz_utils:update_resource(emqx_mongo_connector, Source) of
         {error, Reason} ->
             error({load_config_error, Reason});
         {ok, Id} ->

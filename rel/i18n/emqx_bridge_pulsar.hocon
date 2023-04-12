@@ -1,0 +1,288 @@
+emqx_bridge_pulsar {
+  pulsar_producer_struct {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  desc_type {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  desc_name {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  config_enable {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  servers {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  authentication {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_batch_size {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_compression {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_send_buffer {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_sync_timeout {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  auth_basic_username {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  auth_basic_password {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  auth_token_jwt {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_max_batch_bytes {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_retention_period {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_local_topic {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_pulsar_topic {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_strategy {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_buffer {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  buffer_mode {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  buffer_per_partition_limit {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  buffer_segment_bytes {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  buffer_memory_overload_protection {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_message_opts {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_key_template {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+  producer_value_template {
+    desc {
+      en: ""
+      zh: ""
+    }
+    label {
+      en: ""
+      zh: ""
+    }
+  }
+
+}

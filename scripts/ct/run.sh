@@ -176,6 +176,9 @@ for dep in ${CT_DEPS}; do
         cassandra)
             FILES+=( '.ci/docker-compose-file/docker-compose-cassandra.yaml' )
             ;;
+        pulsar)
+            FILES+=( '.ci/docker-compose-file/docker-compose-pulsar-tcp.yaml' )
+            ;;
         *)
             echo "unknown_ct_dependency $dep"
             exit 1

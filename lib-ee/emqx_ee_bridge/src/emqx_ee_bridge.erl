@@ -34,7 +34,8 @@ api_schemas(Method) ->
         ref(emqx_ee_bridge_clickhouse, Method),
         ref(emqx_ee_bridge_dynamo, Method),
         ref(emqx_ee_bridge_rocketmq, Method),
-        ref(emqx_ee_bridge_cassa, Method)
+        ref(emqx_ee_bridge_cassa, Method),
+        ref(emqx_bridge_pulsar, Method ++ "_producer")
     ].
 
 schema_modules() ->
@@ -53,7 +54,8 @@ schema_modules() ->
         emqx_ee_bridge_clickhouse,
         emqx_ee_bridge_dynamo,
         emqx_ee_bridge_rocketmq,
-        emqx_ee_bridge_cassa
+        emqx_ee_bridge_cassa,
+        emqx_bridge_pulsar
     ].
 
 examples(Method) ->
@@ -91,7 +93,8 @@ resource_type(tdengine) -> emqx_ee_connector_tdengine;
 resource_type(clickhouse) -> emqx_ee_connector_clickhouse;
 resource_type(dynamo) -> emqx_ee_connector_dynamo;
 resource_type(rocketmq) -> emqx_ee_connector_rocketmq;
-resource_type(cassandra) -> emqx_ee_connector_cassa.
+resource_type(cassandra) -> emqx_ee_connector_cassa;
+resource_type(pulsar_producer) -> emqx_bridge_pulsar_impl_producer.
 
 fields(bridges) ->
     [
@@ -151,7 +154,8 @@ fields(bridges) ->
                     required => false
                 }
             )}
-    ] ++ kafka_structs() ++ mongodb_structs() ++ influxdb_structs() ++ redis_structs() ++
+    ] ++ kafka_structs() ++ pulsar_structs() ++ mongodb_structs() ++ influxdb_structs() ++
+        redis_structs() ++
         pgsql_structs() ++ clickhouse_structs().
 
 mongodb_structs() ->
@@ -185,6 +189,18 @@ kafka_structs() ->
             mk(
                 hoconsc:map(name, ref(emqx_ee_bridge_kafka, kafka_consumer)),
                 #{desc => <<"Kafka Consumer Bridge Config">>, required => false}
+            )}
+    ].
+
+pulsar_structs() ->
+    [
+        {pulsar_producer,
+            mk(
+                hoconsc:map(name, ref(emqx_bridge_pulsar, pulsar_producer)),
+                #{
+                    desc => <<"Pulsar Producer Bridge Config">>,
+                    required => false
+                }
             )}
     ].
 

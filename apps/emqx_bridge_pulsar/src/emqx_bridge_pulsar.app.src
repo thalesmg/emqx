@@ -1,0 +1,16 @@
+{application, emqx_bridge_pulsar, [
+    {description, "EMQX Pulsar Bridge"},
+    {vsn, "0.1.0"},
+    {registered, []},
+    {mod, {emqx_bridge_pulsar_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        emqx_ee_connector,
+        pulsar
+    ]},
+    {env, []},
+    {modules, []},
+
+    {links, []}
+]}.

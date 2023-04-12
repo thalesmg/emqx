@@ -69,7 +69,8 @@
     T == tdengine;
     T == dynamo;
     T == rocketmq;
-    T == cassandra
+    T == cassandra;
+    T == pulsar_producer
 ).
 
 load() ->

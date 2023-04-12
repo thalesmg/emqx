@@ -6,7 +6,8 @@
         kernel,
         stdlib,
         emqx_ee_connector,
-        telemetry
+        telemetry,
+        emqx_bridge_pulsar
     ]},
     {env, []},
     {modules, []},

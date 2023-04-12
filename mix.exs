@@ -320,7 +320,8 @@ defmodule EMQXUmbrella.MixProject do
           emqx_ee_conf: :load,
           emqx_ee_connector: :permanent,
           emqx_ee_bridge: :permanent,
-          emqx_ee_schema_registry: :permanent
+          emqx_ee_schema_registry: :permanent,
+          emqx_bridge_pulsar: :permanent
         ],
         else: []
       )

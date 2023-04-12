@@ -428,7 +428,8 @@ relx_apps_per_edition(ee) ->
         {emqx_ee_conf, load},
         emqx_ee_connector,
         emqx_ee_bridge,
-        emqx_ee_schema_registry
+        emqx_ee_schema_registry,
+        emqx_bridge_pulsar
     ];
 relx_apps_per_edition(ce) ->
     [].

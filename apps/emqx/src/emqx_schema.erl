@@ -2927,6 +2927,9 @@ split_host_port(Str) ->
 do_parse_server(Str, Opts) ->
     DefaultPort = maps:get(default_port, Opts, undefined),
     NotExpectingPort = maps:get(no_port, Opts, false),
+    DefaultScheme = maps:get(default_scheme, Opts, undefined),
+    SupportedSchemes = maps:get(supported_schemes, Opts, []),
+    NotExpectingScheme = (not is_list(DefaultScheme)) andalso length(SupportedSchemes) =:= 0,
     case is_integer(DefaultPort) andalso NotExpectingPort of
         true ->
             %% either provide a default port from schema,
@@ -2935,22 +2938,72 @@ do_parse_server(Str, Opts) ->
         false ->
             ok
     end,
+    case is_list(DefaultScheme) andalso (not lists:member(DefaultScheme, SupportedSchemes)) of
+        true ->
+            %% inconsistent schema
+            error("bad_schema");
+        false ->
+            ok
+    end,
     %% do not split with space, there should be no space allowed between host and port
     case string:tokens(Str, ":") of
-        [Hostname, Port] ->
+        [Scheme, "//" ++ Hostname, Port] ->
             NotExpectingPort andalso throw("not_expecting_port_number"),
-            {check_hostname(Hostname), parse_port(Port)};
-        [Hostname] ->
+            NotExpectingScheme andalso throw("not_expecting_scheme"),
+            {check_scheme(Scheme, Opts), check_hostname(Hostname), parse_port(Port)};
+        [Scheme, "//" ++ Hostname] ->
+            NotExpectingScheme andalso throw("not_expecting_scheme"),
             case is_integer(DefaultPort) of
                 true ->
-                    {check_hostname(Hostname), DefaultPort};
+                    {check_scheme(Scheme, Opts), check_hostname(Hostname), DefaultPort};
                 false when NotExpectingPort ->
-                    check_hostname(Hostname);
+                    {check_scheme(Scheme, Opts), check_hostname(Hostname)};
                 false ->
                     throw("missing_port_number")
             end;
+        [Hostname, Port] ->
+            NotExpectingPort andalso throw("not_expecting_port_number"),
+            case is_list(DefaultScheme) of
+                false ->
+                    {check_hostname(Hostname), parse_port(Port)};
+                true ->
+                    {DefaultScheme, check_hostname(Hostname), parse_port(Port)}
+            end;
+        [Hostname] ->
+            case is_integer(DefaultPort) orelse NotExpectingPort of
+                true ->
+                    ok;
+                false ->
+                    throw("missing_port_number")
+            end,
+            case is_list(DefaultScheme) orelse NotExpectingScheme of
+                true ->
+                    ok;
+                false ->
+                    throw("missing_scheme")
+            end,
+            case {is_integer(DefaultPort), is_list(DefaultScheme)} of
+                {true, true} ->
+                    {DefaultScheme, check_hostname(Hostname), DefaultPort};
+                {true, false} ->
+                    {check_hostname(Hostname), DefaultPort};
+                {false, true} ->
+                    {DefaultScheme, check_hostname(Hostname)};
+                {false, false} ->
+                    check_hostname(Hostname)
+            end;
         _ ->
             throw("bad_host_port")
+    end.
+
+check_scheme(Str, Opts) ->
+    SupportedSchemes = maps:get(supported_schemes, Opts, []),
+    IsSupported = lists:member(Str, SupportedSchemes),
+    case IsSupported of
+        true ->
+            Str;
+        false ->
+            throw("unsupported_scheme")
     end.
 
 check_hostname(Str) ->

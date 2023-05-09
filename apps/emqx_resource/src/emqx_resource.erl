@@ -268,7 +268,7 @@ query(ResId, Request, Opts) ->
                 {true, _} ->
                     %% only Kafka producer so far
                     Opts1 = Opts#{is_buffer_supported => true},
-                    emqx_resource_buffer_worker:simple_async_query(ResId, Request, Opts1);
+                    emqx_resource_buffer_worker:simple_sync_query(ResId, Request);
                 {false, sync} ->
                     emqx_resource_buffer_worker:sync_query(ResId, Request, Opts);
                 {false, async} ->

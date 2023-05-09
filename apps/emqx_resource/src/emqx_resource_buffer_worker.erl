@@ -143,7 +143,7 @@ simple_sync_query(Id, Request) ->
     emqx_resource_metrics:matched_inc(Id),
     Ref = make_request_ref(),
     Result = call_query(force_sync, Id, Index, Ref, ?SIMPLE_QUERY(Request), QueryOpts),
-    _ = handle_query_result(Id, Result, _HasBeenSent = false),
+    _ = handle_query_result(Id, Result, _HasBeenSent = false, #{is_simple_query => true}),
     Result.
 
 %% simple async-query the resource without batching and queuing.
@@ -155,7 +155,7 @@ simple_async_query(Id, Request, QueryOpts0) ->
     emqx_resource_metrics:matched_inc(Id),
     Ref = make_request_ref(),
     Result = call_query(async_if_possible, Id, Index, Ref, ?SIMPLE_QUERY(Request), QueryOpts),
-    _ = handle_query_result(Id, Result, _HasBeenSent = false),
+    _ = handle_query_result(Id, Result, _HasBeenSent = false, #{is_simple_query => true}),
     Result.
 
 simple_query_opts() ->
@@ -420,7 +420,7 @@ collect_and_enqueue_query_requests(Request0, Data0) ->
         index := Index,
         queue := Q
     } = Data0,
-    Requests = collect_requests([Request0], ?COLLECT_REQ_LIMIT),
+    Requests = collect_requests([Request0], persistent_term:get({?MODULE, collect_req_limit}, ?COLLECT_REQ_LIMIT)),
     Queries =
         lists:map(
             fun
@@ -555,8 +555,15 @@ do_flush(
         inflight_tid := InflightTID
     } = Data0,
     %% unwrap when not batching (i.e., batch size == 1)
-    [?QUERY(ReplyTo, _, HasBeenSent, _ExpireAt) = Request] = Batch,
+    [?QUERY(ReplyTo, R, HasBeenSent, _ExpireAt) = Request0] = Batch,
     QueryOpts = #{inflight_tid => InflightTID, simple_query => false},
+    R0 = case R of
+             {send_message, #{'$magic' := _} = M} ->
+                 {send_message, maps:remove('$magic', M)};
+             _ ->
+                 R
+         end,
+    Request = ?QUERY(ReplyTo, R0, HasBeenSent, _ExpireAt),
     Result = call_query(async_if_possible, Id, Index, Ref, Request, QueryOpts),
     Reply = ?REPLY(ReplyTo, HasBeenSent, Result),
     case reply_caller(Id, Reply, QueryOpts) of
@@ -600,6 +607,14 @@ do_flush(
                 true when IsUnrecoverableError ->
                     ack_inflight(InflightTID, Ref, Id, Index);
                 true ->
+                    case R of
+                        {send_message, #{'$magic' := #{reply_to := P, ref := Reff}}} ->
+                            Nowww = now_(),
+                            P ! {enqueued, #{ref => Reff, at => Nowww}},
+                            ok;
+                        _ ->
+                            ok
+                    end,
                     ok;
                 false ->
                     ack_inflight(InflightTID, Ref, Id, Index)
@@ -757,11 +772,11 @@ reply_caller(Id, Reply, QueryOpts) ->
 %% Should only reply to the caller when the decision is final (not
 %% retriable).  See comment on `handle_query_result_pure'.
 reply_caller_defer_metrics(Id, ?REPLY(undefined, HasBeenSent, Result), _QueryOpts) ->
-    handle_query_result_pure(Id, Result, HasBeenSent);
+    handle_query_result_pure(Id, Result, HasBeenSent, #{is_simple_query => false});
 reply_caller_defer_metrics(Id, ?REPLY(ReplyTo, HasBeenSent, Result), QueryOpts) ->
     IsSimpleQuery = maps:get(simple_query, QueryOpts, false),
     IsUnrecoverableError = is_unrecoverable_error(Result),
-    {ShouldAck, PostFn} = handle_query_result_pure(Id, Result, HasBeenSent),
+    {ShouldAck, PostFn} = handle_query_result_pure(Id, Result, HasBeenSent, #{is_simple_query => false}),
     case {ShouldAck, Result, IsUnrecoverableError, IsSimpleQuery} of
         {ack, {async_return, _}, true, _} ->
             ok = do_reply_caller(ReplyTo, Result);
@@ -777,7 +792,10 @@ reply_caller_defer_metrics(Id, ?REPLY(ReplyTo, HasBeenSent, Result), QueryOpts) 
     {ShouldAck, PostFn}.
 
 handle_query_result(Id, Result, HasBeenSent) ->
-    {ShouldBlock, PostFn} = handle_query_result_pure(Id, Result, HasBeenSent),
+    handle_query_result(Id, Result, HasBeenSent, #{is_simple_query => false}).
+
+handle_query_result(Id, Result, HasBeenSent, Context) ->
+    {ShouldBlock, PostFn} = handle_query_result_pure(Id, Result, HasBeenSent, Context),
     PostFn(),
     ShouldBlock.
 
@@ -787,37 +805,38 @@ handle_query_result(Id, Result, HasBeenSent) ->
 %%   * the result is a success (or at least a delayed result)
 %% We also retry even sync requests.  In that case, we shouldn't reply
 %% the caller until one of those final results above happen.
-handle_query_result_pure(_Id, ?RESOURCE_ERROR_M(exception, Msg), _HasBeenSent) ->
+handle_query_result_pure(_Id, ?RESOURCE_ERROR_M(exception, Msg), _HasBeenSent, _Context) ->
     PostFn = fun() ->
         ?SLOG(error, #{msg => resource_exception, info => Msg}),
         ok
     end,
     {nack, PostFn};
-handle_query_result_pure(_Id, ?RESOURCE_ERROR_M(NotWorking, _), _HasBeenSent) when
+handle_query_result_pure(_Id, ?RESOURCE_ERROR_M(NotWorking, _), _HasBeenSent, _Context) when
     NotWorking == not_connected; NotWorking == blocked
 ->
     {nack, fun() -> ok end};
-handle_query_result_pure(Id, ?RESOURCE_ERROR_M(not_found, Msg), _HasBeenSent) ->
+handle_query_result_pure(Id, ?RESOURCE_ERROR_M(not_found, Msg), _HasBeenSent, _Context) ->
     PostFn = fun() ->
         ?SLOG(error, #{id => Id, msg => resource_not_found, info => Msg}),
         emqx_resource_metrics:dropped_resource_not_found_inc(Id),
         ok
     end,
     {ack, PostFn};
-handle_query_result_pure(Id, ?RESOURCE_ERROR_M(stopped, Msg), _HasBeenSent) ->
+handle_query_result_pure(Id, ?RESOURCE_ERROR_M(stopped, Msg), _HasBeenSent, _Context) ->
     PostFn = fun() ->
         ?SLOG(error, #{id => Id, msg => resource_stopped, info => Msg}),
         emqx_resource_metrics:dropped_resource_stopped_inc(Id),
         ok
     end,
     {ack, PostFn};
-handle_query_result_pure(Id, ?RESOURCE_ERROR_M(Reason, _), _HasBeenSent) ->
+handle_query_result_pure(Id, ?RESOURCE_ERROR_M(Reason, _), _HasBeenSent, _Context) ->
     PostFn = fun() ->
         ?SLOG(error, #{id => Id, msg => other_resource_error, reason => Reason}),
         ok
     end,
     {nack, PostFn};
-handle_query_result_pure(Id, {error, Reason} = Error, HasBeenSent) ->
+handle_query_result_pure(Id, {error, Reason} = Error, HasBeenSent, Context) ->
+    IsSimpleQuery = maps:get(is_simple_query, Context, false),
     case is_unrecoverable_error(Error) of
         true ->
             PostFn =
@@ -831,13 +850,14 @@ handle_query_result_pure(Id, {error, Reason} = Error, HasBeenSent) ->
             PostFn =
                 fun() ->
                     ?SLOG(error, #{id => Id, msg => send_error, reason => Reason}),
+                    IsSimpleQuery andalso inc_sent_failed(Id, HasBeenSent),
                     ok
                 end,
             {nack, PostFn}
     end;
-handle_query_result_pure(Id, {async_return, Result}, HasBeenSent) ->
-    handle_query_async_result_pure(Id, Result, HasBeenSent);
-handle_query_result_pure(Id, Result, HasBeenSent) ->
+handle_query_result_pure(Id, {async_return, Result}, HasBeenSent, Context) ->
+    handle_query_async_result_pure(Id, Result, HasBeenSent, Context);
+handle_query_result_pure(Id, Result, HasBeenSent, _Context) ->
     PostFn = fun() ->
         assert_ok_result(Result),
         inc_sent_success(Id, HasBeenSent),
@@ -845,7 +865,8 @@ handle_query_result_pure(Id, Result, HasBeenSent) ->
     end,
     {ack, PostFn}.
 
-handle_query_async_result_pure(Id, {error, Reason} = Error, HasBeenSent) ->
+handle_query_async_result_pure(Id, {error, Reason} = Error, HasBeenSent, Context) ->
+    IsSimpleQuery = maps:get(is_simple_query, Context, false),
     case is_unrecoverable_error(Error) of
         true ->
             PostFn =
@@ -858,13 +879,14 @@ handle_query_async_result_pure(Id, {error, Reason} = Error, HasBeenSent) ->
         false ->
             PostFn = fun() ->
                 ?SLOG(error, #{id => Id, msg => async_send_error, reason => Reason}),
+                IsSimpleQuery andalso inc_sent_failed(Id, HasBeenSent),
                 ok
             end,
             {nack, PostFn}
     end;
-handle_query_async_result_pure(_Id, {ok, Pid}, _HasBeenSent) when is_pid(Pid) ->
+handle_query_async_result_pure(_Id, {ok, Pid}, _HasBeenSent, _Context) when is_pid(Pid) ->
     {ack, fun() -> ok end};
-handle_query_async_result_pure(_Id, ok, _HasBeenSent) ->
+handle_query_async_result_pure(_Id, ok, _HasBeenSent, _Context) ->
     {ack, fun() -> ok end}.
 
 handle_async_worker_down(Data0, Pid) ->
@@ -1199,7 +1221,7 @@ maybe_flush_after_async_reply(_WasFullBeforeReplyHandled = false) ->
     ?tp(skip_flushing_worker, #{}),
     ok;
 maybe_flush_after_async_reply(_WasFullBeforeReplyHandled = true) ->
-    %% the inflight table was full before handling aync reply
+    %% the inflight table was full before handling async reply
     ?tp(do_flushing_worker, #{}),
     ok = ?MODULE:flush_worker(self()).
 

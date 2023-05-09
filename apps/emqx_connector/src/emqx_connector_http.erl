@@ -27,6 +27,7 @@
 %% callbacks of behaviour emqx_resource
 -export([
     callback_mode/0,
+    is_buffer_supported/0,
     on_start/2,
     on_stop/2,
     on_query/3,
@@ -192,6 +193,8 @@ ref(Field) -> hoconsc:ref(?MODULE, Field).
 
 callback_mode() -> async_if_possible.
 
+is_buffer_supported() -> persistent_term:get({?MODULE, is_buffer_supported}, false).
+
 on_start(
     InstId,
     #{
@@ -268,10 +271,11 @@ on_query(InstId, {send_message, Msg}, State) ->
                 request_timeout := Timeout
             } = process_request(Request, Msg),
             %% bridge buffer worker has retry, do not let ehttpc retry
-            Retry = 0,
+            Retry = 2,
+            ClientId = maps:get(clientid, Msg, undefined),
             on_query(
                 InstId,
-                {undefined, Method, {Path, Headers, Body}, Timeout, Retry},
+                {ClientId, Method, {Path, Headers, Body}, Timeout, Retry},
                 State
             )
     end;
@@ -371,9 +375,10 @@ on_query_async(InstId, {send_message, Msg}, ReplyFunAndArgs, State) ->
                 headers := Headers,
                 request_timeout := Timeout
             } = process_request(Request, Msg),
+            ClientId = maps:get(clientid, Msg, undefined),
             on_query_async(
                 InstId,
-                {undefined, Method, {Path, Headers, Body}, Timeout},
+                {ClientId, Method, {Path, Headers, Body}, Timeout},
                 ReplyFunAndArgs,
                 State
             )
@@ -395,12 +400,19 @@ on_query_async(
         }
     ),
     NRequest = formalize_request(Method, BasePath, Request),
+    Context = #{ attempt => 1
+               , state => State
+               , key_or_num => KeyOrNum
+               , method => Method
+               , request => NRequest
+               , timeout => Timeout
+               },
     ok = ehttpc:request_async(
         Worker,
         Method,
         NRequest,
         Timeout,
-        {fun ?MODULE:reply_delegator/2, [ReplyFunAndArgs]}
+        {fun ?MODULE:reply_delegator/2, [{Context, ReplyFunAndArgs}]}
     ),
     {ok, Worker}.
 
@@ -577,26 +589,74 @@ bin(Str) when is_list(Str) ->
 bin(Atom) when is_atom(Atom) ->
     atom_to_binary(Atom, utf8).
 
-reply_delegator(ReplyFunAndArgs, Result) ->
+reply_delegator({Context, ReplyFunAndArgs}, Result0) ->
+    %% Result = transform_result(Result0),
+    _ = transform_result(Result0),
+    Result = Result0,
+    maybe_retry(Result, Context, ReplyFunAndArgs).
+
+transform_result(Result) ->
     case Result of
         %% The normal reason happens when the HTTP connection times out before
         %% the request has been fully processed
         {error, Reason} when
-            Reason =:= econnrefused;
-            Reason =:= timeout;
             Reason =:= normal;
             Reason =:= {shutdown, normal};
-            Reason =:= {shutdown, closed}
+            Reason =:= {shutdown, closed};
+            Reason =:= econnrefused;
+            Reason =:= timeout
         ->
-            Result1 = {error, {recoverable_error, Reason}},
-            emqx_resource:apply_reply_fun(ReplyFunAndArgs, Result1);
+            {error, {recoverable_error, Reason}};
         {error, {closed, _Message} = Reason} ->
-            %% _Message = "The connection was lost."
-            Result1 = {error, {recoverable_error, Reason}},
-            emqx_resource:apply_reply_fun(ReplyFunAndArgs, Result1);
+            {error, {recoverable_error, Reason}};
         _ ->
-            emqx_resource:apply_reply_fun(ReplyFunAndArgs, Result)
+            Result
     end.
+
+maybe_retry(Result0, _Context = #{attempt := N}, ReplyFunAndArgs) when N > 3 ->
+    ?SLOG(warning, #{msg => gave_up, pid => self(), reason => Result0, where => {?MODULE, ?LINE}}),
+    %% Result = case Result0 of
+    %%     %% The normal reason happens when the HTTP connection times out before
+    %%     %% the request has been fully processed
+    %%     {error, Reason} when
+    %%         Reason =:= normal;
+    %%         Reason =:= {shutdown, normal};
+    %%         Reason =:= {shutdown, closed};
+    %%         Reason =:= econnrefused;
+    %%         Reason =:= timeout
+    %%     ->
+    %%         {error, {unrecoverable_error, Reason}};
+    %%     {error, {closed, _Message} = Reason} ->
+    %%         {error, {unrecoverable_error, Reason}};
+    %%     _ ->
+    %%         Result0
+    %% end,
+    emqx_resource:apply_reply_fun(ReplyFunAndArgs, Result0);
+maybe_retry({error, Reason}, Context, ReplyFunAndArgs) ->
+    #{ state := State
+     , attempt := Attempt
+     , key_or_num := KeyOrNum
+     , method := Method
+     , request := Request
+     , timeout := Timeout
+     } = Context,
+    IsFree = Reason =:= normal orelse Reason =:= {shutdown, normal},
+    NContext = case IsFree of
+                   true -> Context;
+                   false -> Context#{attempt := Attempt + 1}
+               end,
+    Worker = resolve_pool_worker(State, KeyOrNum),
+    %% ?SLOG(warning, #{msg => gonna_retry, pid => self(), reason => Reason, where => {?MODULE, ?LINE}, worker => Worker}),
+    ok = ehttpc:request_async(
+        Worker,
+        Method,
+        Request,
+        Timeout,
+        {fun ?MODULE:reply_delegator/2, [{NContext, ReplyFunAndArgs}]}
+    ),
+    ok;
+maybe_retry(Result, _Context, ReplyFunAndArgs) ->
+    emqx_resource:apply_reply_fun(ReplyFunAndArgs, Result).
 
 %% The HOCON schema system may generate sensitive keys with this format
 is_sensitive_key([{str, StringKey}]) ->

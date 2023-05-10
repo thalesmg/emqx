@@ -434,7 +434,7 @@ do_the_work(InstId, Msg, State) ->
      } = process_request(Request, Msg),
     ClientId = maps:get(clientid, Msg, undefined),
     NRequest = formalize_request(Method, BasePath, {Path, Headers, Body}),
-    {ok, {ClientId, Method, NRequest, Timeout}}.
+    {dont_count, {ClientId, Method, NRequest, Timeout}}.
 
 just_do_it_async(InstId, {KeyOrNum, Method, NRequest, Timeout}, ReplyFunAndArgs, State) ->
     #{base_path := BasePath} = State,

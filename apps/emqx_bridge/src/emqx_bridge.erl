@@ -201,7 +201,7 @@ send_message(BridgeId, Message) ->
             {error, {bridge_not_found, BridgeId}};
         #{enable := true} = Config ->
             QueryOpts = query_opts(Config),
-            {ok, ReadyRequest} = emqx_resource:simple_sync_query(ResId, {do_the_work, Message}),
+            {dont_count, ReadyRequest} = emqx_resource:simple_sync_query(ResId, {do_the_work, Message}),
             emqx_resource:query(ResId, {just_do_it, ReadyRequest}, QueryOpts);
         #{enable := false} ->
             {error, {bridge_stopped, BridgeId}}

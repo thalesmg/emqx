@@ -140,7 +140,12 @@ simple_sync_query(Id, Request) ->
     ?tp(simple_sync_query, #{id => Id, request => Request}),
     Index = undefined,
     QueryOpts = simple_query_opts(),
-    emqx_resource_metrics:matched_inc(Id),
+    case Request of
+        {do_the_work, _} ->
+            ok;
+        _ ->
+            emqx_resource_metrics:matched_inc(Id)
+    end,
     Ref = make_request_ref(),
     Result = call_query(force_sync, Id, Index, Ref, ?SIMPLE_QUERY(Request), QueryOpts),
     _ = handle_query_result(Id, Result, _HasBeenSent = false, #{is_simple_query => true}),
@@ -805,6 +810,8 @@ handle_query_result(Id, Result, HasBeenSent, Context) ->
 %%   * the result is a success (or at least a delayed result)
 %% We also retry even sync requests.  In that case, we shouldn't reply
 %% the caller until one of those final results above happen.
+handle_query_result_pure(_Id, {dont_count, _}, _HasBeenSent, _Context) ->
+    {ack, fun() -> ok end};
 handle_query_result_pure(_Id, ?RESOURCE_ERROR_M(exception, Msg), _HasBeenSent, _Context) ->
     PostFn = fun() ->
         ?SLOG(error, #{msg => resource_exception, info => Msg}),

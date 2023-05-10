@@ -184,7 +184,9 @@ init({Id, Index, Opts}) ->
     true = gproc_pool:connect_worker(Id, {Id, Index}),
     BatchSize = maps:get(batch_size, Opts, ?DEFAULT_BATCH_SIZE),
     QueueOpts = replayq_opts(Id, Index, Opts),
-    Queue = replayq:open(QueueOpts),
+    %% Queue = replayq:open(QueueOpts),
+    Queue = ets:new(some_name, [ordered_set, public]),
+    ets:insert(Queue, {{count}, 0}),
     emqx_resource_metrics:queuing_set(Id, Index, queue_count(Queue)),
     emqx_resource_metrics:inflight_set(Id, Index, 0),
     InflightWinSize = maps:get(inflight_window, Opts, ?DEFAULT_INFLIGHT),
@@ -268,7 +270,7 @@ blocked(info, Info, _Data) ->
     keep_state_and_data.
 
 terminate(_Reason, #{id := Id, index := Index, queue := Q}) ->
-    _ = replayq:close(Q),
+    %% _ = replayq:close(Q),
     emqx_resource_metrics:inflight_set(Id, Index, 0),
     %% since we want volatile queues, this will be 0 after
     %% termination.
@@ -474,6 +476,19 @@ maybe_flush(Data0) ->
             {keep_state, ensure_flush_timer(Data0)}
     end.
 
+%% hardcoded to batch of 1....
+pop(Q) ->
+    case ets:first(Q) of
+        '$end_of_table' ->
+            [];
+        {count} ->
+            [];
+        K ->
+            [{K, I}] = ets:take(Q, K),
+            ets:update_counter(Q, {count}, {2, -1, 0, 0}),
+            [I]
+    end.
+
 %% Called during the `running' state only.
 -spec flush(data()) -> gen_statem:event_handler_result(state(), data()).
 flush(Data0) ->
@@ -504,7 +519,8 @@ flush(Data0) ->
             {keep_state, Data2};
         {_, false} ->
             ?tp(buffer_worker_flush_before_pop, #{}),
-            {Q1, QAckRef, Batch} = replayq:pop(Q0, #{count_limit => BatchSize}),
+            %% {Q1, QAckRef, Batch} = replayq:pop(Q0, #{count_limit => BatchSize}),
+            Batch = pop(Q0), Q1 = Q0,
             Data2 = Data1#{queue := Q1},
             ?tp(buffer_worker_flush_before_sieve_expired, #{}),
             Now = now_(),
@@ -512,7 +528,7 @@ flush(Data0) ->
             %% waiting for a response.
             case sieve_expired_requests(Batch, Now) of
                 {[], _AllExpired} ->
-                    ok = replayq:ack(Q1, QAckRef),
+                    %% ok = replayq:ack(Q1, QAckRef),
                     emqx_resource_metrics:dropped_expired_inc(Id, length(Batch)),
                     emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
                     ?tp(buffer_worker_flush_all_expired, #{batch => Batch}),
@@ -533,7 +549,8 @@ flush(Data0) ->
                         is_batch => IsBatch,
                         batch => NotExpired,
                         ref => Ref,
-                        ack_ref => QAckRef
+                        %% ack_ref => QAckRef
+                        ack_ref => nah
                     })
             end
     end.
@@ -575,7 +592,7 @@ do_flush(
         %% Failed; remove the request from the queue, as we cannot pop
         %% from it again, but we'll retry it using the inflight table.
         nack ->
-            ok = replayq:ack(Q1, QAckRef),
+            %% ok = replayq:ack(Q1, QAckRef),
             %% we set it atomically just below; a limitation of having
             %% to use tuples for atomic ets updates
             IsRetriable = true,
@@ -602,7 +619,7 @@ do_flush(
             {next_state, blocked, Data1};
         %% Success; just ack.
         ack ->
-            ok = replayq:ack(Q1, QAckRef),
+            %% ok = replayq:ack(Q1, QAckRef),
             %% Async requests are acked later when the async worker
             %% calls the corresponding callback function.  Also, we
             %% must ensure the async worker is being monitored for
@@ -1271,40 +1288,45 @@ estimate_size(QItem) ->
 
 -spec append_queue(id(), index(), replayq:q(), [queue_query()]) ->
     {[queue_query()], replayq:q()}.
+%% append_queue(Id, Index, Q, Queries) ->
+%%     %% this assertion is to ensure that we never append a raw binary
+%%     %% because the marshaller will get lost.
+%%     false = is_binary(hd(Queries)),
+%%     Q0 = replayq:append(Q, Queries),
+%%     {Overflown, Q2} =
+%%         case replayq:overflow(Q0) of
+%%             OverflownBytes when OverflownBytes =< 0 ->
+%%                 {[], Q0};
+%%             OverflownBytes ->
+%%                 PopOpts = #{bytes_limit => OverflownBytes, count_limit => 999999999},
+%%                 {Q1, QAckRef, Items2} = replayq:pop(Q0, PopOpts),
+%%                 ok = replayq:ack(Q1, QAckRef),
+%%                 Dropped = length(Items2),
+%%                 emqx_resource_metrics:dropped_queue_full_inc(Id, Dropped),
+%%                 ?SLOG(info, #{
+%%                     msg => buffer_worker_overflow,
+%%                     resource_id => Id,
+%%                     worker_index => Index,
+%%                     dropped => Dropped
+%%                 }),
+%%                 {Items2, Q1}
+%%         end,
+%%     emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q2)),
+%%     ?tp(
+%%         buffer_worker_appended_to_queue,
+%%         #{
+%%             id => Id,
+%%             items => Queries,
+%%             queue_count => queue_count(Q2),
+%%             overflown => length(Overflown)
+%%         }
+%%     ),
+%%     {Overflown, Q2}.
 append_queue(Id, Index, Q, Queries) ->
-    %% this assertion is to ensure that we never append a raw binary
-    %% because the marshaller will get lost.
-    false = is_binary(hd(Queries)),
-    Q0 = replayq:append(Q, Queries),
-    {Overflown, Q2} =
-        case replayq:overflow(Q0) of
-            OverflownBytes when OverflownBytes =< 0 ->
-                {[], Q0};
-            OverflownBytes ->
-                PopOpts = #{bytes_limit => OverflownBytes, count_limit => 999999999},
-                {Q1, QAckRef, Items2} = replayq:pop(Q0, PopOpts),
-                ok = replayq:ack(Q1, QAckRef),
-                Dropped = length(Items2),
-                emqx_resource_metrics:dropped_queue_full_inc(Id, Dropped),
-                ?SLOG(info, #{
-                    msg => buffer_worker_overflow,
-                    resource_id => Id,
-                    worker_index => Index,
-                    dropped => Dropped
-                }),
-                {Items2, Q1}
-        end,
-    emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q2)),
-    ?tp(
-        buffer_worker_appended_to_queue,
-        #{
-            id => Id,
-            items => Queries,
-            queue_count => queue_count(Q2),
-            overflown => length(Overflown)
-        }
-    ),
-    {Overflown, Q2}.
+    ets:insert(Q, [{{erlang:monotonic_time(nanosecond)}, Q0} || Q0 <- Queries]),
+    ets:update_counter(Q, {count}, {2, length(Queries)}),
+    emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q)),
+    {[], Q}.
 
 %%==============================================================================
 %% the inflight queue for async query
@@ -1553,7 +1575,8 @@ assert_ok_result(R) ->
     error({not_ok_result, R}).
 
 queue_count(Q) ->
-    replayq:count(Q).
+    %% replayq:count(Q).
+    emqx_utils_ets:lookup_value(Q, {count}, 0).
 
 disk_queue_dir(Id, Index) ->
     QDir0 = binary_to_list(Id) ++ ":" ++ integer_to_list(Index),

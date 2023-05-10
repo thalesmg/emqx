@@ -36,6 +36,8 @@
     reply_delegator/2
 ]).
 
+-export([do_the_work/3, just_do_it_async/4]).
+
 -type url() :: emqx_http_lib:uri_map().
 -reflect_type([url/0]).
 -typerefl_from_string({url/0, emqx_http_lib, uri_parse}).
@@ -257,6 +259,8 @@ on_stop(InstId, #{pool_name := PoolName}) ->
     }),
     ehttpc_sup:stop_pool(PoolName).
 
+on_query(InstId, {do_the_work, Msg}, State) ->
+    do_the_work(InstId, Msg, State);
 on_query(InstId, {send_message, Msg}, State) ->
     case maps:get(request, State, undefined) of
         undefined ->
@@ -362,6 +366,8 @@ on_query(
             {error, #{status_code => StatusCode, headers => Headers, body => Body}}
     end.
 
+on_query_async(InstId, {just_do_it, Request}, ReplyFunAndArgs, State) ->
+    just_do_it_async(InstId, Request, ReplyFunAndArgs, State);
 on_query_async(InstId, {send_message, Msg}, ReplyFunAndArgs, State) ->
     case maps:get(request, State, undefined) of
         undefined ->
@@ -400,6 +406,48 @@ on_query_async(
         }
     ),
     NRequest = formalize_request(Method, BasePath, Request),
+    Context = #{ attempt => 1
+               , state => State
+               , key_or_num => KeyOrNum
+               , method => Method
+               , request => NRequest
+               , timeout => Timeout
+               },
+    ok = ehttpc:request_async(
+        Worker,
+        Method,
+        NRequest,
+        Timeout,
+        {fun ?MODULE:reply_delegator/2, [{Context, ReplyFunAndArgs}]}
+    ),
+    {ok, Worker}.
+
+do_the_work(InstId, Msg, State) ->
+    #{base_path := BasePath} = State,
+    Request = maps:get(request, State, undefined),
+    #{
+      method := Method,
+      path := Path,
+      body := Body,
+      headers := Headers,
+      request_timeout := Timeout
+     } = process_request(Request, Msg),
+    ClientId = maps:get(clientid, Msg, undefined),
+    NRequest = formalize_request(Method, BasePath, {Path, Headers, Body}),
+    {ok, {ClientId, Method, NRequest, Timeout}}.
+
+just_do_it_async(InstId, {KeyOrNum, Method, NRequest, Timeout}, ReplyFunAndArgs, State) ->
+    #{base_path := BasePath} = State,
+    Worker = resolve_pool_worker(State, KeyOrNum),
+    ?TRACE(
+        "QUERY_ASYNC",
+        "http_connector_received",
+        #{
+            request => redact(NRequest),
+            connector => InstId,
+            state => redact(State)
+        }
+    ),
     Context = #{ attempt => 1
                , state => State
                , key_or_num => KeyOrNum

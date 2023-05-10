@@ -529,13 +529,13 @@ flush(Data0) ->
             case sieve_expired_requests(Batch, Now) of
                 {[], _AllExpired} ->
                     %% ok = replayq:ack(Q1, QAckRef),
-                    emqx_resource_metrics:dropped_expired_inc(Id, length(Batch)),
-                    emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
+                    %% emqx_resource_metrics:dropped_expired_inc(Id, length(Batch)),
+                    %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
                     ?tp(buffer_worker_flush_all_expired, #{batch => Batch}),
                     flush(Data2);
                 {NotExpired, Expired} ->
-                    NumExpired = length(Expired),
-                    emqx_resource_metrics:dropped_expired_inc(Id, NumExpired),
+                    %% NumExpired = length(Expired),
+                    %% emqx_resource_metrics:dropped_expired_inc(Id, NumExpired),
                     IsBatch = (BatchSize > 1),
                     %% We *must* use the new queue, because we currently can't
                     %% `nack' a `pop'.
@@ -606,7 +606,7 @@ do_flush(
             mark_inflight_as_retriable(InflightTID, Ref),
             {Data1, WorkerMRef} = ensure_async_worker_monitored(Data0, Result),
             store_async_worker_reference(InflightTID, Ref, WorkerMRef),
-            emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
+            %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
             ?tp(
                 buffer_worker_flush_nack,
                 #{
@@ -643,7 +643,7 @@ do_flush(
             end,
             {Data1, WorkerMRef} = ensure_async_worker_monitored(Data0, Result),
             store_async_worker_reference(InflightTID, Ref, WorkerMRef),
-            emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
+            %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
             ?tp(
                 buffer_worker_flush_ack,
                 #{
@@ -698,7 +698,7 @@ do_flush(#{queue := Q1} = Data0, #{
             mark_inflight_as_retriable(InflightTID, Ref),
             {Data1, WorkerMRef} = ensure_async_worker_monitored(Data0, Result),
             store_async_worker_reference(InflightTID, Ref, WorkerMRef),
-            emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
+            %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
             ?tp(
                 buffer_worker_flush_nack,
                 #{
@@ -727,7 +727,7 @@ do_flush(#{queue := Q1} = Data0, #{
             end,
             {Data1, WorkerMRef} = ensure_async_worker_monitored(Data0, Result),
             store_async_worker_reference(InflightTID, Ref, WorkerMRef),
-            emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
+            %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q1)),
             CurrentCount = queue_count(Q1),
             ?tp(
                 buffer_worker_flush_ack,
@@ -1325,7 +1325,7 @@ estimate_size(QItem) ->
 append_queue(Id, Index, Q, Queries) ->
     ets:insert(Q, [{{erlang:monotonic_time(nanosecond)}, Q0} || Q0 <- Queries]),
     ets:update_counter(Q, {count}, {2, length(Queries)}),
-    emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q)),
+    %% emqx_resource_metrics:queuing_set(Id, Index, queue_count(Q)),
     {[], Q}.
 
 %%==============================================================================
@@ -1414,7 +1414,7 @@ inflight_append(
     IsNew = ets:insert_new(InflightTID, InflightItem),
     BatchSize = length(Batch),
     IsNew andalso inc_inflight(InflightTID, BatchSize),
-    emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID)),
+    %% emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID)),
     ?tp(buffer_worker_appended_to_inflight, #{item => InflightItem, is_new => IsNew}),
     ok;
 inflight_append(
@@ -1429,7 +1429,7 @@ inflight_append(
     InflightItem = ?INFLIGHT_ITEM(Ref, Query, IsRetriable, WorkerMRef),
     IsNew = ets:insert_new(InflightTID, InflightItem),
     IsNew andalso inc_inflight(InflightTID, 1),
-    emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID)),
+    %% emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID)),
     ?tp(buffer_worker_appended_to_inflight, #{item => InflightItem, is_new => IsNew}),
     ok;
 inflight_append(InflightTID, {Ref, Data}, _Id, _Index) ->
@@ -1496,7 +1496,8 @@ ack_inflight(InflightTID, Ref, Id, Index) ->
     IsKnownRef = (Count > 0),
     case IsKnownRef of
         true ->
-            emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID));
+            %% emqx_resource_metrics:inflight_set(Id, Index, inflight_num_msgs(InflightTID));
+            ok;
         false ->
             ok
     end,

@@ -434,11 +434,10 @@ do_the_work(InstId, Msg, State) ->
      } = process_request(Request, Msg),
     ClientId = maps:get(clientid, Msg, undefined),
     NRequest = formalize_request(Method, BasePath, {Path, Headers, Body}),
-    {dont_count, {ClientId, Method, NRequest, Timeout}}.
+    Worker = resolve_pool_worker(State, ClientId),
+    {dont_count, {Worker, ClientId, Method, NRequest, Timeout}}.
 
-just_do_it_async(InstId, {KeyOrNum, Method, NRequest, Timeout}, ReplyFunAndArgs, State) ->
-    #{base_path := BasePath} = State,
-    Worker = resolve_pool_worker(State, KeyOrNum),
+just_do_it_async(InstId, {Worker, KeyOrNum, Method, NRequest, Timeout}, ReplyFunAndArgs, State) ->
     ?TRACE(
         "QUERY_ASYNC",
         "http_connector_received",

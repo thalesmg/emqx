@@ -270,7 +270,7 @@ query(ResId, Request, Opts) ->
                     Opts1 = Opts#{is_buffer_supported => true},
                     emqx_resource_buffer_worker:simple_sync_query(ResId, Request);
                 {false, sync} ->
-                    emqx_resource_buffer_worker:sync_query(ResId, Request, Opts);
+                    emqx_resource_buffer_worker:optimistic_sync_query(ResId, Request, Opts);
                 {false, async} ->
                     emqx_resource_buffer_worker:async_query(ResId, Request, Opts)
             end;

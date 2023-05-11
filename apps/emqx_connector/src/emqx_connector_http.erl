@@ -261,6 +261,9 @@ on_stop(InstId, #{pool_name := PoolName}) ->
 
 on_query(InstId, {do_the_work, Msg}, State) ->
     do_the_work(InstId, Msg, State);
+%% on_query(InstId, {just_do_it, Request}, State) ->
+%%     ReplyFunAndArgs =
+%%     just_do_it_async(InstId, Request, ReplyFunAndArgs, State);
 on_query(InstId, {send_message, Msg}, State) ->
     case maps:get(request, State, undefined) of
         undefined ->

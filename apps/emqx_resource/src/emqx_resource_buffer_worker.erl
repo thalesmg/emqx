@@ -38,7 +38,8 @@
 
 -export([
     simple_sync_query/2,
-    simple_async_query/3
+    simple_async_query/3,
+    optimistic_sync_query/3
 ]).
 
 -export([
@@ -150,6 +151,31 @@ simple_sync_query(Id, Request) ->
     Result = call_query(force_sync, Id, Index, Ref, ?SIMPLE_QUERY(Request), QueryOpts),
     _ = handle_query_result(Id, Result, _HasBeenSent = false, #{is_simple_query => true}),
     Result.
+
+optimistic_sync_query(Id, Request, Opts0) ->
+    Index = undefined,
+    QueryOpts = simple_query_opts(),
+    case Request of
+        {do_the_work, _} ->
+            ok;
+        _ ->
+            emqx_resource_metrics:matched_inc(Id)
+    end,
+    Ref = make_request_ref(),
+    Result = call_query(force_sync, Id, Index, Ref, ?SIMPLE_QUERY(Request), QueryOpts),
+    {ShouldBlock, PostFn} = handle_query_result_pure(Id, Result, _HasBeenSent = false, #{is_simple_query => true}),
+    case ShouldBlock of
+        ack ->
+            PostFn(),
+            Result;
+        nack ->
+            Opts1 = ensure_timeout_query_opts(Opts0, sync),
+            Opts2 = ensure_expire_at(Opts1),
+            Opts = maps:put(has_been_sent, true, Opts2),
+            PickKey = maps:get(pick_key, Opts, self()),
+            Timeout = maps:get(timeout, Opts),
+            pick_call(Id, PickKey, {query, Request, Opts}, Timeout)
+    end.
 
 %% simple async-query the resource without batching and queuing.
 -spec simple_async_query(id(), request(), query_opts()) -> term().
@@ -431,11 +457,11 @@ collect_and_enqueue_query_requests(Request0, Data0) ->
             fun
                 (?SEND_REQ(undefined = _ReplyTo, {query, Req, Opts})) ->
                     ReplyFun = maps:get(async_reply_fun, Opts, undefined),
-                    HasBeenSent = false,
+                    HasBeenSent = maps:get(has_been_sent, Opts, false),
                     ExpireAt = maps:get(expire_at, Opts),
                     ?QUERY(ReplyFun, Req, HasBeenSent, ExpireAt);
                 (?SEND_REQ(ReplyTo, {query, Req, Opts})) ->
-                    HasBeenSent = false,
+                    HasBeenSent = maps:get(has_been_sent, Opts, false),
                     ExpireAt = maps:get(expire_at, Opts),
                     ?QUERY(ReplyTo, Req, HasBeenSent, ExpireAt)
             end,

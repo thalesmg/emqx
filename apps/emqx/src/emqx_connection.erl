@@ -333,8 +333,9 @@ init_state(
         conn_mod => ?MODULE
     },
 
-    LimiterTypes = [?LIMITER_BYTES_IN, ?LIMITER_MESSAGE_IN],
-    Limiter = emqx_limiter_container:get_limiter_by_types(Listener, LimiterTypes, LimiterCfg),
+    %% LimiterTypes = [?LIMITER_BYTES_IN, ?LIMITER_MESSAGE_IN],
+    %% Limiter = emqx_limiter_container:get_limiter_by_types(Listener, LimiterTypes, LimiterCfg),
+    Limiter = undefined,
 
     FrameOpts = #{
         strict_mode => emqx_config:get_zone_conf(Zone, [mqtt, strict_mode]),

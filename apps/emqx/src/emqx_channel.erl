@@ -285,9 +285,10 @@ init(
             outbound => #{}
         },
         auth_cache = #{},
-        quota = emqx_limiter_container:get_limiter_by_types(
-            ListenerId, [?LIMITER_ROUTING], LimiterCfg
-        ),
+        %% quota = emqx_limiter_container:get_limiter_by_types(
+        %%     ListenerId, [?LIMITER_ROUTING], LimiterCfg
+        %% ),
+        quota = undefined,
         timers = #{},
         conn_state = idle,
         takeover = false,

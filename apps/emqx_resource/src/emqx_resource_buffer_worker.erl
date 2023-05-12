@@ -561,12 +561,12 @@ do_flush(
     } = Data0,
     %% unwrap when not batching (i.e., batch size == 1)
     [?QUERY(ReplyTo, R, HasBeenSent, _ExpireAt) = Request0] = Batch,
-    QueryOpts = #{inflight_tid => InflightTID, simple_query => false},
-    R0 = case R of
-             {send_message, #{'$magic' := _} = M} ->
-                 {send_message, maps:remove('$magic', M)};
+    QueryOpts0 = #{inflight_tid => InflightTID, simple_query => false},
+    {R0, QueryOpts} = case R of
+             {send_message, #{'$magic' := Magic} = M} ->
+                 {{send_message, maps:remove('$magic', M)}, maps:put('$magic', Magic, QueryOpts0)};
              _ ->
-                 R
+                 {R, QueryOpts0}
          end,
     Request = ?QUERY(ReplyTo, R0, HasBeenSent, _ExpireAt),
     Result = call_query(async_if_possible, Id, Index, Ref, Request, QueryOpts),
@@ -1031,6 +1031,14 @@ handle_async_reply(
     } = ReplyContext,
     Result
 ) ->
+    case Opts of
+        #{'$magic' := #{ref := R, reply_to := P}} ->
+            Nowww = now_(),
+            P ! {start_reply, #{ref => R, at => Nowww}},
+            ok;
+        _ ->
+            ok
+    end,
     case maybe_handle_unknown_async_reply(InflightTID, Ref, Opts) of
         discard ->
             ok;
@@ -1216,6 +1224,14 @@ do_async_ack(InflightTID, Ref, Id, Index, PostFn, QueryOpts) ->
         false when IsKnownRef ->
             PostFn();
         false ->
+            ok
+    end,
+    case QueryOpts of
+        #{'$magic' := #{ref := R, reply_to := P}} ->
+            Nowww = now_(),
+            P ! {end_reply, #{ref => R, at => Nowww}},
+            ok;
+        _ ->
             ok
     end,
     ok.

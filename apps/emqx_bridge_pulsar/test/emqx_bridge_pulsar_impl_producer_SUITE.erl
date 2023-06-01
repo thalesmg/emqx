@@ -1079,6 +1079,13 @@ t_cluster(Config) ->
             ),
             {ok, _} = erpc:call(N1, fun() -> create_bridge(Config) end),
             {ok, _} = snabbkaffe:receive_events(SRef0),
+            {ok, _} = snabbkaffe:block_until(
+                ?match_n_events(
+                    NumNodes,
+                    #{?snk_kind := bridge_post_config_update_done}
+                ),
+                15_000
+            ),
             lists:foreach(
                 fun(N) ->
                     ?retry(
@@ -1095,6 +1102,7 @@ t_cluster(Config) ->
             ),
             erpc:multicall(Nodes, fun wait_until_producer_connected/0),
             Message0 = emqx_message:make(ClientId, QoS, MQTTTopic, Payload),
+            ?tp(publishing_message, #{}),
             erpc:call(N2, emqx, publish, [Message0]),
 
             lists:foreach(
@@ -1108,10 +1116,7 @@ t_cluster(Config) ->
                 Nodes
             ),
 
-            ok
-        end,
-        fun(_Trace) ->
-            Data0 = receive_consumed(10_000),
+            Data0 = receive_consumed(30_000),
             ?assertMatch(
                 [
                     #{
@@ -1123,7 +1128,9 @@ t_cluster(Config) ->
                 ],
                 Data0
             ),
+
             ok
-        end
+        end,
+        []
     ),
     ok.

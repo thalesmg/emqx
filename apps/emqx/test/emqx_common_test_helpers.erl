@@ -844,6 +844,7 @@ setup_node(Node, Opts) when is_map(Opts) ->
         "mnesia"
     ]),
     erpc:call(Node, application, set_env, [mnesia, dir, MnesiaDataDir]),
+    ct:print("mnesia dir ~p => ~p", [Node, MnesiaDataDir]),
 
     %% Needs to be set explicitly because ekka:start() (which calls `gen`) is called without Handler
     %% in emqx_common_test_helpers:start_apps(...)
@@ -874,6 +875,7 @@ setup_node(Node, Opts) when is_map(Opts) ->
                         node(),
                         integer_to_list(erlang:unique_integer())
                     ]),
+                    ct:print("node data dir ~p => ~p", [Node, NodeDataDir]),
                     Cookie = atom_to_list(erlang:get_cookie()),
                     os:putenv("EMQX_NODE__DATA_DIR", NodeDataDir),
                     os:putenv("EMQX_NODE__COOKIE", Cookie),
@@ -1289,20 +1291,24 @@ call_janitor() ->
 call_janitor(Timeout) ->
     Janitor = get_or_spawn_janitor(),
     ok = emqx_test_janitor:stop(Janitor, Timeout),
+    erase({?MODULE, janitor_proc}),
     ok.
 
 get_or_spawn_janitor() ->
     case get({?MODULE, janitor_proc}) of
         undefined ->
+            ct:print("~p spawning janitor", [self()]),
             {ok, Janitor} = emqx_test_janitor:start_link(),
             put({?MODULE, janitor_proc}, Janitor),
             Janitor;
         Janitor ->
+            ct:print("~p had a janitor", [self()]),
             Janitor
     end.
 
 on_exit(Fun) ->
     Janitor = get_or_spawn_janitor(),
+    ct:print("~p registering ~p", [self(), Fun]),
     ok = emqx_test_janitor:push_on_exit_callback(Janitor, Fun).
 
 %%-------------------------------------------------------------------------------

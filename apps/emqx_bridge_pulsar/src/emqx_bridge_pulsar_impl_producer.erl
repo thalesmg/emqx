@@ -353,6 +353,7 @@ start_producer(Config, InstanceId, ClientId, ClientOpts) ->
                 message_template => MessageTemplate
             },
             ?tp(pulsar_producer_bridge_started, #{}),
+            io:format(user, "\n\n~p>>>>>>>>>>>>>>>>>>>>>>>>>>> bridge started\n\n", [{node(), ?MODULE, ?LINE}]),
             {ok, State}
     catch
         Kind:Error:Stacktrace ->

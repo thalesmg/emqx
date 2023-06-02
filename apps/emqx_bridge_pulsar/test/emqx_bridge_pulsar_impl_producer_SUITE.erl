@@ -9,6 +9,7 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include_lib("emqx/include/asserts.hrl").
 
 -import(emqx_common_test_helpers, [on_exit/1]).
 
@@ -49,6 +50,8 @@ only_once_tests() ->
     ].
 
 init_per_suite(Config) ->
+    emqx_common_test_helpers:clear_screen(),
+    %% snabbkaffe:fix_ct_logging(),
     Config.
 
 end_per_suite(_Config) ->
@@ -148,6 +151,7 @@ end_per_testcase(_Testcase, Config) ->
         true ->
             ok;
         false ->
+            ct:print("calling end ~p", [_Testcase]),
             ProxyHost = ?config(proxy_host, Config),
             ProxyPort = ?config(proxy_port, Config),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
@@ -161,6 +165,7 @@ end_per_testcase(_Testcase, Config) ->
     end.
 
 common_init_per_testcase(TestCase, Config0) ->
+    ct:print("calling init ~p", [TestCase]),
     ct:timetrap(timer:seconds(60)),
     delete_all_bridges(),
     UniqueNum = integer_to_binary(erlang:unique_integer()),
@@ -440,7 +445,10 @@ wait_until_connected(SupMod, Mod) ->
     ?retry(
         _Sleep = 300,
         _Attempts0 = 20,
+       begin
+        true = length(Pids) > 0,
         lists:foreach(fun(P) -> {connected, _} = sys:get_state(P) end, Pids)
+       end
     ),
     ok.
 
@@ -500,7 +508,12 @@ cluster(Config) ->
             _ ->
                 ct_slave
         end,
+    %% GenUniqueName = fun() ->
+    %%                         Num = erlang:unique_integer(),
+    %%                         list_to_atom("autocluster_node" ++ integer_to_list(Num))
+    %%                 end,
     Cluster = emqx_common_test_helpers:emqx_cluster(
+        %% [{core, GenUniqueName()}, {core, GenUniqueName()}],
         [core, core],
         [
             {apps, [emqx_conf, emqx_bridge, emqx_rule_engine, emqx_bridge_pulsar]},
@@ -531,9 +544,10 @@ start_cluster(Cluster) ->
          || {Name, Opts} <- Cluster
         ],
     on_exit(fun() ->
-        emqx_utils:pmap(
+        %% emqx_utils:pmap(
+        lists:foreach(
             fun(N) ->
-                ct:pal("stopping ~p", [N]),
+                ct:print("stopping ~p", [N]),
                 ok = emqx_common_test_helpers:stop_slave(N)
             end,
             Nodes
@@ -1055,6 +1069,8 @@ t_resource_manager_crash_before_producers_started(Config) ->
     ok.
 
 t_cluster(Config) ->
+    ?retrying(Config, 3,
+    begin
     MQTTTopic = ?config(mqtt_topic, Config),
     ResourceId = resource_id(Config),
     Cluster = cluster(Config),
@@ -1063,22 +1079,24 @@ t_cluster(Config) ->
     Payload = emqx_guid:to_hexstr(emqx_guid:gen()),
     ?check_trace(
         begin
+            NumNodes = length(Cluster),
+            {ok, SRef0} = snabbkaffe:subscribe(
+                ?match_event(#{?snk_kind := emqx_bridge_app_started}),
+                NumNodes,
+                15_000
+            ),
             Nodes = [N1, N2 | _] = start_cluster(Cluster),
             %% wait until bridge app supervisor is up; by that point,
             %% `emqx_config_handler:add_handler' has been called and the node should be
             %% ready to create bridges.
-            NumNodes = length(Nodes),
-            {ok, _} = snabbkaffe:block_until(
-                ?match_n_events(NumNodes, #{?snk_kind := emqx_bridge_app_started}),
-                15_000
-            ),
-            {ok, SRef0} = snabbkaffe:subscribe(
-                ?match_event(#{?snk_kind := pulsar_producer_bridge_started}),
-                NumNodes,
-                15_000
-            ),
-            {ok, _} = erpc:call(N1, fun() -> create_bridge(Config) end),
             {ok, _} = snabbkaffe:receive_events(SRef0),
+            %% {ok, SRef1} = snabbkaffe:subscribe(
+            %%     ?match_event(#{?snk_kind := pulsar_producer_bridge_started}),
+            %%     NumNodes,
+            %%     15_000
+            %% ),
+            {ok, _} = erpc:call(N1, fun() -> create_bridge(Config) end),
+            %% {ok, _} = snabbkaffe:receive_events(SRef1),
             {ok, _} = snabbkaffe:block_until(
                 ?match_n_events(
                     NumNodes,
@@ -1133,4 +1151,6 @@ t_cluster(Config) ->
         end,
         []
     ),
-    ok.
+    ct:fail("booom"),
+    ok
+    end).

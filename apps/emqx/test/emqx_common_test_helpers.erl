@@ -1,3 +1,4 @@
+
 %%--------------------------------------------------------------------
 %% Copyright (c) 2019-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
@@ -724,6 +725,12 @@ start_slave(Name, Opts) when is_map(Opts) ->
     Node = node_name(Name),
     put_peer_mod(Node, SlaveMod),
     Cookie = atom_to_list(erlang:get_cookie()),
+    PrivDataDir = maps:get(priv_data_dir, Opts, "/tmp"),
+    NodeDataDir = filename:join([
+                                 PrivDataDir,
+                                 Node,
+                                 integer_to_list(erlang:unique_integer())
+                                ]),
     DoStart =
         fun() ->
             case SlaveMod of
@@ -738,7 +745,8 @@ start_slave(Name, Opts) when is_map(Opts) ->
                             {erl_flags, erl_flags()},
                             {env, [
                                 {"HOCON_ENV_OVERRIDE_PREFIX", "EMQX_"},
-                                {"EMQX_NODE__COOKIE", Cookie}
+                                {"EMQX_NODE__COOKIE", Cookie},
+                                {"EMQX_NODE__DATA_DIR", NodeDataDir}
                             ]}
                         ]
                     );
@@ -877,11 +885,19 @@ setup_node(Node, Opts) when is_map(Opts) ->
                     ]),
                     ct:print("node data dir ~p => ~p", [Node, NodeDataDir]),
                     Cookie = atom_to_list(erlang:get_cookie()),
-                    os:putenv("EMQX_NODE__DATA_DIR", NodeDataDir),
-                    os:putenv("EMQX_NODE__COOKIE", Cookie),
+                    case os:getenv("EMQX_NODE__DATA_DIR") of
+                        false ->
+                            os:putenv("EMQX_NODE__DATA_DIR", NodeDataDir);
+                        _ ->
+                            ok
+                    end,
+                    case os:getenv("EMQX_NODE__COOKIE") of
+                        false ->
+                            os:putenv("EMQX_NODE__COOKIE", Cookie);
+                        _ ->
+                            ok
+                    end,
                     emqx_config:init_load(SchemaMod),
-                    os:unsetenv("EMQX_NODE__DATA_DIR"),
-                    os:unsetenv("EMQX_NODE__COOKIE"),
                     application:set_env(emqx, init_config_load_done, true)
                 end,
 

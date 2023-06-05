@@ -9,14 +9,14 @@
 -export([init/2, handle_message/3]).
 
 init(Topic, Args) ->
-    ct:pal("consumer init: ~p", [#{topic => Topic, args => Args}]),
+    ct:print("consumer init: ~p", [#{topic => Topic, args => Args}]),
     SendTo = maps:get(send_to, Args),
     ?tp(pulsar_echo_consumer_init, #{topic => Topic}),
     {ok, #{topic => Topic, send_to => SendTo}}.
 
 handle_message(Message, Payloads, State) ->
     #{send_to := SendTo, topic := Topic} = State,
-    ct:pal(
+    ct:print(
         "pulsar consumer received:\n  ~p",
         [#{message => Message, payloads => Payloads}]
     ),

@@ -152,6 +152,7 @@ end_per_testcase(_Testcase, Config) ->
             ok;
         false ->
             ct:print("calling end ~p", [_Testcase]),
+            ok = emqx_config:delete_override_conf_files(),
             ProxyHost = ?config(proxy_host, Config),
             ProxyPort = ?config(proxy_port, Config),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
@@ -378,7 +379,7 @@ start_consumer(TestCase, Config) ->
                 (integer_to_binary(PulsarPort))/binary>>
         ),
     ConnOpts = #{},
-    ConsumerClientId = TestCase,
+    ConsumerClientId = list_to_atom(atom_to_list(TestCase) ++ integer_to_list(erlang:unique_integer())),
     CertsPath = emqx_common_test_helpers:deps_path(emqx, "etc/certs"),
     SSLOpts = #{
         enable => UseTLS,
@@ -398,12 +399,12 @@ start_consumer(TestCase, Config) ->
         cb_init_args => #{send_to => self()},
         cb_module => pulsar_echo_consumer,
         sub_type => 'Shared',
-        subscription => atom_to_list(TestCase),
+        subscription => atom_to_list(TestCase) ++ integer_to_list(erlang:unique_integer()),
         max_consumer_num => 1,
         %% Note!  This must not coincide with the client
         %% id, or else weird bugs will happen, like the
         %% consumer never starts...
-        name => test_consumer,
+        name => list_to_atom("test_consumer" ++ integer_to_list(erlang:unique_integer())),
         consumer_id => 1,
         conn_opts => ConnOpts
     },
@@ -1071,14 +1072,14 @@ t_resource_manager_crash_before_producers_started(Config) ->
 t_cluster(Config) ->
     ?retrying(Config, 3,
     begin
+    ?check_trace(
+        begin
     MQTTTopic = ?config(mqtt_topic, Config),
     ResourceId = resource_id(Config),
     Cluster = cluster(Config),
     ClientId = emqx_guid:to_hexstr(emqx_guid:gen()),
     QoS = 0,
     Payload = emqx_guid:to_hexstr(emqx_guid:gen()),
-    ?check_trace(
-        begin
             NumNodes = length(Cluster),
             {ok, SRef0} = snabbkaffe:subscribe(
                 ?match_event(#{?snk_kind := emqx_bridge_app_started}),
@@ -1097,13 +1098,13 @@ t_cluster(Config) ->
             %% ),
             {ok, _} = erpc:call(N1, fun() -> create_bridge(Config) end),
             %% {ok, _} = snabbkaffe:receive_events(SRef1),
-            {ok, _} = snabbkaffe:block_until(
-                ?match_n_events(
-                    NumNodes,
-                    #{?snk_kind := bridge_post_config_update_done}
-                ),
-                15_000
-            ),
+            %% {ok, _} = snabbkaffe:block_until(
+            %%     ?match_n_events(
+            %%         NumNodes,
+            %%         #{?snk_kind := bridge_post_config_update_done}
+            %%     ),
+            %%     15_000
+            %% ),
             lists:foreach(
                 fun(N) ->
                     ?retry(

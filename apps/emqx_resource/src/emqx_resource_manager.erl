@@ -483,6 +483,7 @@ handle_event(state_timeout, health_check, connected, Data) ->
 handle_event(
     {call, From}, {add_channel, ChannelId, Config}, connected = _State, Data
 ) ->
+    ?tp(resource_manager_add_channel_connected_enter, #{}),
     handle_add_channel(From, Data, ChannelId, Config);
 handle_event(
     {call, From}, {remove_channel, ChannelId}, connected = _State, Data

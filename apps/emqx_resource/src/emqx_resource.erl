@@ -769,7 +769,7 @@ clean_allocated_resources(ResourceId, ResourceMod) ->
 %% @doc Split : separated resource id into type and name.
 %% Type must be an existing atom.
 %% Name is converted to atom if `atom_name` option is true.
--spec parse_resource_id(list() | binary(), #{atom_name => boolean()}) ->
+-spec parse_resource_id(list() | binary() | iolist(), #{atom_name => boolean()}) ->
     {atom(), atom() | binary()}.
 parse_resource_id(Id0, Opts) ->
     Id = bin(Id0),

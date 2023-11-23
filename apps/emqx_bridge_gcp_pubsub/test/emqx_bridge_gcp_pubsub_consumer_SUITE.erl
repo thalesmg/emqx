@@ -11,8 +11,12 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
--define(BRIDGE_TYPE, gcp_pubsub_consumer).
--define(BRIDGE_TYPE_BIN, <<"gcp_pubsub_consumer">>).
+-define(BRIDGE_V1_TYPE, gcp_pubsub_consumer).
+-define(BRIDGE_V1_TYPE_BIN, <<"gcp_pubsub_consumer">>).
+-define(ACTION_TYPE, gcp_pubsub_consumer).
+-define(ACTION_TYPE_BIN, <<"gcp_pubsub_consumer">>).
+-define(CONNECTOR_TYPE, gcp_pubsub_consumer).
+-define(CONNECTOR_TYPE_BIN, <<"gcp_pubsub_consumer">>).
 -define(REPUBLISH_TOPIC, <<"republish/t">>).
 
 -import(emqx_common_test_helpers, [on_exit/1]).
@@ -38,9 +42,12 @@ init_per_suite(Config) ->
                 [
                     emqx,
                     emqx_conf,
+                    emqx_connector,
                     emqx_bridge_gcp_pubsub,
                     emqx_bridge,
-                    emqx_rule_engine
+                    emqx_rule_engine,
+                    emqx_management,
+                    {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
                 ],
                 #{work_dir => emqx_cth_suite:work_dir(Config)}
             ),
@@ -107,6 +114,9 @@ init_per_testcase(TestCase, Config) ->
 
 common_init_per_testcase(TestCase, Config0) ->
     ct:timetrap(timer:seconds(60)),
+    ProxyHost = ?config(proxy_host, Config0),
+    ProxyPort = ?config(proxy_port, Config0),
+    emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
     emqx_bridge_testlib:delete_all_bridges(),
     emqx_config:delete_override_conf_files(),
     ConsumerTopic =
@@ -140,7 +150,7 @@ common_init_per_testcase(TestCase, Config0) ->
     ensure_topics(Config),
     ok = snabbkaffe:start_trace(),
     [
-        {bridge_type, ?BRIDGE_TYPE},
+        {bridge_type, ?ACTION_TYPE},
         {bridge_name, Name},
         {bridge_config, ConsumerConfig},
         {consumer_name, Name},
@@ -157,7 +167,7 @@ end_per_testcase(_Testcase, Config) ->
             ProxyHost = ?config(proxy_host, Config),
             ProxyPort = ?config(proxy_port, Config),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
-            emqx_bridge_testlib:delete_all_bridges(),
+            emqx_bridge_v2_testlib:delete_all_bridges_and_connectors(),
             emqx_common_test_helpers:call_janitor(60_000),
             ok = snabbkaffe:stop(),
             ok
@@ -206,7 +216,7 @@ consumer_config(TestCase, Config) ->
             "  max_retries = 2\n"
             "  pool_size = 8\n"
             "  resource_opts {\n"
-            "    health_check_interval = \"1s\"\n"
+            "    health_check_interval = \"500ms\"\n"
             %% to fail and retry pulling faster
             "    request_ttl = \"5s\"\n"
             "  }\n"
@@ -221,7 +231,7 @@ consumer_config(TestCase, Config) ->
 
 parse_and_check(ConfigString, Name) ->
     {ok, RawConf} = hocon:binary(ConfigString, #{format => map}),
-    TypeBin = ?BRIDGE_TYPE_BIN,
+    TypeBin = ?ACTION_TYPE_BIN,
     hocon_tconf:check_plain(emqx_bridge_schema, RawConf, #{required => false, atom_key => false}),
     #{<<"bridges">> := #{TypeBin := #{Name := Config}}} = RawConf,
     ct:pal("config:\n  ~p", [Config]),
@@ -350,14 +360,14 @@ create_bridge(Config) ->
     create_bridge(Config, _Overrides = #{}).
 
 create_bridge(Config, Overrides) ->
-    Type = ?BRIDGE_TYPE_BIN,
+    Type = ?ACTION_TYPE_BIN,
     Name = ?config(consumer_name, Config),
     BridgeConfig0 = ?config(consumer_config, Config),
     BridgeConfig = emqx_utils_maps:deep_merge(BridgeConfig0, Overrides),
     emqx_bridge:create(Type, Name, BridgeConfig).
 
 remove_bridge(Config) ->
-    Type = ?BRIDGE_TYPE_BIN,
+    Type = ?ACTION_TYPE_BIN,
     Name = ?config(consumer_name, Config),
     emqx_bridge:remove(Type, Name).
 
@@ -365,7 +375,7 @@ create_bridge_api(Config) ->
     create_bridge_api(Config, _Overrides = #{}).
 
 create_bridge_api(Config, Overrides) ->
-    TypeBin = ?BRIDGE_TYPE_BIN,
+    TypeBin = ?ACTION_TYPE_BIN,
     Name = ?config(consumer_name, Config),
     BridgeConfig0 = ?config(consumer_config, Config),
     BridgeConfig = emqx_utils_maps:deep_merge(BridgeConfig0, Overrides),
@@ -385,7 +395,7 @@ create_bridge_api(Config, Overrides) ->
     Res.
 
 probe_bridge_api(Config) ->
-    TypeBin = ?BRIDGE_TYPE_BIN,
+    TypeBin = ?ACTION_TYPE_BIN,
     Name = ?config(consumer_name, Config),
     ConsumerConfig = ?config(consumer_config, Config),
     Params = ConsumerConfig#{<<"type">> => TypeBin, <<"name">> => Name},
@@ -414,13 +424,31 @@ start_and_subscribe_mqtt(Config) ->
     ),
     ok.
 
-resource_id(Config) ->
-    Type = ?BRIDGE_TYPE_BIN,
+health_check_action(Config) ->
     Name = ?config(consumer_name, Config),
-    emqx_bridge_resource:resource_id(Type, Name).
+    emqx_bridge:lookup(?BRIDGE_V1_TYPE_BIN, Name).
+
+health_check_connector(Config) ->
+    ConnectorName = connector_name(Config),
+    emqx_connector:lookup(?CONNECTOR_TYPE_BIN, ConnectorName).
+
+connector_name(Config) ->
+    ActionName = ?config(consumer_name, Config),
+    %% FIXME
+    %% `emqx_bridge_resource:resource_id' requires an existing connector in the config.....
+    <<"connector_", ActionName/binary>>.
+
+action_resource_id(Config) ->
+    ActionName = ?config(consumer_name, Config),
+    ConnectorName = connector_name(Config),
+    emqx_bridge_v2:id(?ACTION_TYPE_BIN, ActionName, ConnectorName).
+
+connector_resource_id(Config) ->
+    ConnectorName = connector_name(Config),
+    emqx_connector_resource:resource_id(?CONNECTOR_TYPE_BIN, ConnectorName).
 
 bridge_id(Config) ->
-    Type = ?BRIDGE_TYPE_BIN,
+    Type = ?ACTION_TYPE_BIN,
     Name = ?config(consumer_name, Config),
     emqx_bridge_resource:bridge_id(Type, Name).
 
@@ -452,8 +480,7 @@ receive_published(#{n := N, timeout := Timeout} = Opts, Acc) ->
     end.
 
 create_rule_and_action_http(Config) ->
-    ConsumerName = ?config(consumer_name, Config),
-    BridgeId = emqx_bridge_resource:bridge_id(?BRIDGE_TYPE_BIN, ConsumerName),
+    BridgeId = action_resource_id(Config),
     ActionFn = <<(atom_to_binary(?MODULE))/binary, ":action_response">>,
     Params = #{
         enable => true,
@@ -494,7 +521,7 @@ action_response(Selected, Envs, Args) ->
     ok.
 
 assert_non_received_metrics(BridgeName) ->
-    Metrics = emqx_bridge:get_metrics(?BRIDGE_TYPE, BridgeName),
+    Metrics = emqx_bridge:get_metrics(?ACTION_TYPE, BridgeName),
     #{counters := Counters0, gauges := Gauges} = Metrics,
     Counters = maps:remove(received, Counters0),
     ?assert(lists:all(fun(V) -> V == 0 end, maps:values(Counters)), #{metrics => Metrics}),
@@ -533,7 +560,7 @@ wait_forgotten(Opts0) ->
     ok.
 
 get_pull_worker_pids(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     Pids =
         [
             PullWorkerPid
@@ -545,7 +572,7 @@ get_pull_worker_pids(Config) ->
     Pids.
 
 get_async_worker_pids(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = connector_resource_id(Config),
     Pids =
         [
             AsyncWorkerPid
@@ -878,12 +905,50 @@ unauthenticated_response() ->
         status_code => 401
     }}.
 
+setup_failure_then_healing_before_action_start(
+    Config,
+    #{
+        type := FailureType,
+        continue := ContinueKind
+    } = Opts
+) ->
+    ProxyName = ?config(proxy_name, Config),
+    ProxyHost = ?config(proxy_host, Config),
+    ProxyPort = ?config(proxy_port, Config),
+    Level = maps:get(level, Opts, notice),
+    JustBefore = maps:get(just_before, Opts, fun() -> ok end),
+    ?force_ordering(
+        #{?snk_kind := gcp_pubsub_consumer_worker_init_enter},
+        #{?snk_kind := will_cut_connection}
+    ),
+    ?force_ordering(
+        #{?snk_kind := connection_cut},
+        #{?snk_kind := gcp_pubsub_consumer_worker_init}
+    ),
+    ?force_ordering(
+        #{?snk_kind := CK} when CK =:= ContinueKind,
+        #{?snk_kind := will_heal_connection}
+    ),
+    spawn_link(fun() ->
+        ?tp(Level, will_cut_connection, #{}),
+        ok = JustBefore(),
+        emqx_common_test_helpers:enable_failure(FailureType, ProxyName, ProxyHost, ProxyPort),
+        on_exit(fun() ->
+            emqx_common_test_helpers:heal_failure(FailureType, ProxyName, ProxyHost, ProxyPort)
+        end),
+        ?tp(Level, connection_cut, #{}),
+        ?tp(Level, will_heal_connection, #{}),
+        emqx_common_test_helpers:heal_failure(FailureType, ProxyName, ProxyHost, ProxyPort),
+        ?tp(Level, healed_connection, #{})
+    end),
+    ok.
+
 %%------------------------------------------------------------------------------
 %% Testcases
 %%------------------------------------------------------------------------------
 
 t_start_stop(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     [#{pubsub_topic := PubSubTopic} | _] = ?config(topic_mapping, Config),
     ?check_trace(
         begin
@@ -913,7 +978,7 @@ t_start_stop(Config) ->
 t_consume_ok(Config) ->
     BridgeName = ?config(consumer_name, Config),
     TopicMapping = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             start_and_subscribe_mqtt(Config),
@@ -1056,7 +1121,7 @@ t_consume_ok(Config) ->
 t_bridge_rule_action_source(Config) ->
     BridgeName = ?config(consumer_name, Config),
     TopicMapping = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             ?assertMatch(
@@ -1126,7 +1191,7 @@ t_bridge_rule_action_source(Config) ->
     ok.
 
 t_on_get_status(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     emqx_bridge_testlib:t_on_get_status(Config, #{failure_status => connecting}),
     %% no workers alive
     ?retry(
@@ -1156,7 +1221,7 @@ t_create_update_via_http_api(Config) ->
 t_multiple_topic_mappings(Config) ->
     BridgeName = ?config(consumer_name, Config),
     TopicMapping = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             start_and_subscribe_mqtt(Config),
@@ -1248,7 +1313,7 @@ t_multiple_pull_workers(Config) ->
     ct:timetrap({seconds, 120}),
     BridgeName = ?config(consumer_name, Config),
     TopicMapping = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             NConsumers = 3,
@@ -1269,7 +1334,7 @@ t_multiple_pull_workers(Config) ->
                     },
                     <<"resource_opts">> => #{
                         %% reduce flakiness
-                        <<"request_ttl">> => <<"15s">>
+                        <<"request_ttl">> => <<"1s">>
                     }
                 }
             ),
@@ -1314,7 +1379,7 @@ t_multiple_pull_workers(Config) ->
 t_nonexistent_topic(Config) ->
     BridgeName = ?config(bridge_name, Config),
     [Mapping0] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     PubSubTopic = <<"nonexistent-", (emqx_guid:to_hexstr(emqx_guid:gen()))/binary>>,
     TopicMapping0 = [Mapping0#{pubsub_topic := PubSubTopic}],
     TopicMapping = emqx_utils_maps:binary_key_map(TopicMapping0),
@@ -1340,7 +1405,7 @@ t_nonexistent_topic(Config) ->
             ensure_topic(Config, PubSubTopic),
             ?assertMatch(
                 ok,
-                emqx_bridge_resource:restart(?BRIDGE_TYPE, BridgeName)
+                emqx_bridge_resource:restart(?ACTION_TYPE, BridgeName)
             ),
             ?retry(
                 _Interval0 = 200,
@@ -1366,7 +1431,7 @@ t_nonexistent_topic(Config) ->
 t_topic_deleted_while_consumer_is_running(Config) ->
     TopicMapping = [#{pubsub_topic := PubSubTopic} | _] = ?config(topic_mapping, Config),
     NTopics = length(TopicMapping),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             {ok, SRef0} =
@@ -1401,28 +1466,32 @@ t_topic_deleted_while_consumer_is_running(Config) ->
     ok.
 
 t_connection_down_before_starting(Config) ->
-    ProxyName = ?config(proxy_name, Config),
-    ProxyHost = ?config(proxy_host, Config),
-    ProxyPort = ?config(proxy_port, Config),
-    ResourceId = resource_id(Config),
     ?check_trace(
         begin
-            emqx_common_test_helpers:with_failure(down, ProxyName, ProxyHost, ProxyPort, fun() ->
-                ?assertMatch(
-                    {{ok, _}, {ok, _}},
-                    ?wait_async_action(
-                        create_bridge(Config),
-                        #{?snk_kind := gcp_pubsub_consumer_worker_init},
-                        10_000
-                    )
-                ),
-                ?assertMatch({ok, connecting}, emqx_resource_manager:health_check(ResourceId)),
-                ok
-            end),
+            ContinueKind = status_checked,
+            Level = warning,
+            setup_failure_then_healing_before_action_start(
+                Config,
+                #{
+                    type => down,
+                    continue => ContinueKind,
+                    level => Level
+                }
+            ),
+            ?assertMatch(
+                {{ok, _}, {ok, _}},
+                ?wait_async_action(
+                    create_bridge(Config),
+                    #{?snk_kind := gcp_pubsub_consumer_worker_init},
+                    10_000
+                )
+            ),
+            ?assertMatch({ok, #{status := connecting}}, health_check_action(Config)),
+            ?tp(Level, ContinueKind, #{}),
             ?retry(
                 _Interval0 = 200,
                 _NAttempts0 = 20,
-                ?assertMatch({ok, connected}, emqx_resource_manager:health_check(ResourceId))
+                ?assertMatch({ok, #{status := connected}}, health_check_action(Config))
             ),
             ok
         end,
@@ -1431,30 +1500,32 @@ t_connection_down_before_starting(Config) ->
     ok.
 
 t_connection_timeout_before_starting(Config) ->
-    ProxyName = ?config(proxy_name, Config),
-    ProxyHost = ?config(proxy_host, Config),
-    ProxyPort = ?config(proxy_port, Config),
-    ResourceId = resource_id(Config),
     ?check_trace(
         begin
-            emqx_common_test_helpers:with_failure(
-                timeout, ProxyName, ProxyHost, ProxyPort, fun() ->
-                    ?assertMatch(
-                        {{ok, _}, {ok, _}},
-                        ?wait_async_action(
-                            create_bridge(Config),
-                            #{?snk_kind := gcp_pubsub_consumer_worker_init},
-                            10_000
-                        )
-                    ),
-                    ?assertMatch({ok, connecting}, emqx_resource_manager:health_check(ResourceId)),
-                    ok
-                end
+            ContinueKind = status_checked,
+            Level = warning,
+            setup_failure_then_healing_before_action_start(
+                Config,
+                #{
+                    type => timeout,
+                    continue => ContinueKind,
+                    level => Level
+                }
             ),
+            ?assertMatch(
+                {{ok, _}, {ok, _}},
+                ?wait_async_action(
+                    create_bridge(Config),
+                    #{?snk_kind := gcp_pubsub_consumer_worker_init},
+                    10_000
+                )
+            ),
+            ?assertMatch({ok, #{status := connecting}}, health_check_action(Config)),
+            ?tp(Level, ContinueKind, #{}),
             ?retry(
                 _Interval0 = 200,
                 _NAttempts0 = 20,
-                ?assertMatch({ok, connected}, emqx_resource_manager:health_check(ResourceId))
+                ?assertMatch({ok, #{status := connected}}, health_check_action(Config))
             ),
             ok
         end,
@@ -1463,7 +1534,7 @@ t_connection_timeout_before_starting(Config) ->
     ok.
 
 t_pull_worker_death(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             ?assertMatch(
@@ -1477,7 +1548,7 @@ t_pull_worker_death(Config) ->
 
             [PullWorkerPid | _] = get_pull_worker_pids(Config),
             Ref = monitor(process, PullWorkerPid),
-            sys:terminate(PullWorkerPid, die),
+            sys:terminate(PullWorkerPid, die, 15_000),
             receive
                 {'DOWN', Ref, process, PullWorkerPid, _} ->
                     ok
@@ -1535,7 +1606,7 @@ t_async_worker_death_mid_pull(Config) ->
                             fun(AsyncWorkerPid) ->
                                 Ref = monitor(process, AsyncWorkerPid),
                                 ct:pal("killing pid ~p", [AsyncWorkerPid]),
-                                exit(AsyncWorkerPid, kill),
+                                sys:terminate(AsyncWorkerPid, die, 15_000),
                                 receive
                                     {'DOWN', Ref, process, AsyncWorkerPid, _} ->
                                         ct:pal("killed pid ~p", [AsyncWorkerPid]),
@@ -1610,23 +1681,28 @@ t_async_worker_death_mid_pull(Config) ->
     ok.
 
 t_connection_error_while_creating_subscription(Config) ->
-    ProxyName = ?config(proxy_name, Config),
-    ProxyHost = ?config(proxy_host, Config),
-    ProxyPort = ?config(proxy_port, Config),
     ?check_trace(
         begin
-            emqx_common_test_helpers:with_failure(down, ProxyName, ProxyHost, ProxyPort, fun() ->
-                %% check retries
-                {ok, SRef0} =
-                    snabbkaffe:subscribe(
-                        ?match_event(#{?snk_kind := "gcp_pubsub_consumer_worker_subscription_error"}),
-                        _NEvents0 = 2,
-                        10_000
-                    ),
-                {ok, _} = create_bridge(Config),
-                {ok, _} = snabbkaffe:receive_events(SRef0),
-                ok
-            end),
+            ContinueKind = status_checked,
+            Level = warning,
+            setup_failure_then_healing_before_action_start(
+                Config,
+                #{
+                    type => down,
+                    continue => ContinueKind,
+                    level => Level
+                }
+            ),
+            %% check retries
+            {ok, SRef0} =
+                snabbkaffe:subscribe(
+                    ?match_event(#{?snk_kind := "gcp_pubsub_consumer_worker_subscription_error"}),
+                    _NEvents0 = 2,
+                    10_000
+                ),
+            {ok, _} = create_bridge(Config),
+            {ok, _} = snabbkaffe:receive_events(SRef0),
+            ?tp(Level, ContinueKind, #{}),
             %% eventually succeeds
             {ok, _} =
                 ?block_until(
@@ -1650,11 +1726,11 @@ t_subscription_already_exists(Config) ->
                     10_000
                 ),
             %% now restart the same bridge
-            {ok, _} = emqx_bridge:disable_enable(disable, ?BRIDGE_TYPE, BridgeName),
+            {ok, _} = emqx_bridge:disable_enable(disable, ?ACTION_TYPE, BridgeName),
 
             {{ok, _}, {ok, _}} =
                 ?wait_async_action(
-                    emqx_bridge:disable_enable(enable, ?BRIDGE_TYPE, BridgeName),
+                    emqx_bridge:disable_enable(enable, ?ACTION_TYPE, BridgeName),
                     #{?snk_kind := "gcp_pubsub_consumer_worker_subscription_ready"},
                     10_000
                 ),
@@ -1697,7 +1773,7 @@ t_subscription_patch_error(Config) ->
                     10_000
                 ),
             %% now restart the same bridge
-            {ok, _} = emqx_bridge:disable_enable(disable, ?BRIDGE_TYPE, BridgeName),
+            {ok, _} = emqx_bridge:disable_enable(disable, ?ACTION_TYPE, BridgeName),
 
             ?force_ordering(
                 #{?snk_kind := "gcp_pubsub_consumer_worker_subscription_already_exists"},
@@ -1717,7 +1793,7 @@ t_subscription_patch_error(Config) ->
 
             {{ok, _}, {ok, _}} =
                 ?wait_async_action(
-                    emqx_bridge:disable_enable(enable, ?BRIDGE_TYPE, BridgeName),
+                    emqx_bridge:disable_enable(enable, ?ACTION_TYPE, BridgeName),
                     #{?snk_kind := "gcp_pubsub_consumer_worker_subscription_patch_error"},
                     10_000
                 ),
@@ -1737,7 +1813,7 @@ t_subscription_patch_error(Config) ->
 
 t_topic_deleted_while_creating_subscription(Config) ->
     [#{pubsub_topic := PubSubTopic}] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             ?force_ordering(
@@ -1771,7 +1847,7 @@ t_topic_deleted_while_creating_subscription(Config) ->
 t_topic_deleted_while_patching_subscription(Config) ->
     BridgeName = ?config(bridge_name, Config),
     [#{pubsub_topic := PubSubTopic}] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             {{ok, _}, {ok, _}} =
@@ -1781,7 +1857,7 @@ t_topic_deleted_while_patching_subscription(Config) ->
                     10_000
                 ),
             %% now restart the same bridge
-            {ok, _} = emqx_bridge:disable_enable(disable, ?BRIDGE_TYPE, BridgeName),
+            {ok, _} = emqx_bridge:disable_enable(disable, ?ACTION_TYPE, BridgeName),
 
             ?force_ordering(
                 #{?snk_kind := "gcp_pubsub_consumer_worker_subscription_already_exists"},
@@ -1802,7 +1878,7 @@ t_topic_deleted_while_patching_subscription(Config) ->
             %% topic does not exist anymore doesn't return errors either...
             {{ok, _}, {ok, _}} =
                 ?wait_async_action(
-                    emqx_bridge:disable_enable(enable, ?BRIDGE_TYPE, BridgeName),
+                    emqx_bridge:disable_enable(enable, ?ACTION_TYPE, BridgeName),
                     #{?snk_kind := "gcp_pubsub_consumer_worker_subscription_ready"},
                     10_000
                 ),
@@ -1814,7 +1890,7 @@ t_topic_deleted_while_patching_subscription(Config) ->
     ok.
 
 t_subscription_deleted_while_consumer_is_running(Config) ->
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             {{ok, _}, {ok, #{subscription_id := SubscriptionId}}} =
@@ -1854,7 +1930,7 @@ t_subscription_deleted_while_consumer_is_running(Config) ->
 t_subscription_and_topic_deleted_while_consumer_is_running(Config) ->
     ct:timetrap({seconds, 90}),
     [#{pubsub_topic := PubSubTopic}] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             {{ok, _}, {ok, #{subscription_id := SubscriptionId}}} =
@@ -2119,7 +2195,7 @@ t_get_subscription(Config) ->
 
 t_permission_denied_topic_check(Config) ->
     [#{pubsub_topic := PubSubTopic}] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             %% the emulator does not check any credentials
@@ -2194,7 +2270,7 @@ t_permission_denied_worker(Config) ->
 
 t_unauthenticated_topic_check(Config) ->
     [#{pubsub_topic := PubSubTopic}] = ?config(topic_mapping, Config),
-    ResourceId = resource_id(Config),
+    ResourceId = action_resource_id(Config),
     ?check_trace(
         begin
             %% the emulator does not check any credentials

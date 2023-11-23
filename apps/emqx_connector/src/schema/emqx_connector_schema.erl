@@ -68,6 +68,7 @@ enterprise_fields_connectors() -> [].
 
 connector_type_to_bridge_types(azure_event_hub_producer) -> [azure_event_hub_producer];
 connector_type_to_bridge_types(confluent_producer) -> [confluent_producer];
+connector_type_to_bridge_types(gcp_pubsub_consumer) -> [gcp_pubsub_consumer];
 connector_type_to_bridge_types(gcp_pubsub_producer) -> [gcp_pubsub_producer];
 connector_type_to_bridge_types(kafka_producer) -> [kafka, kafka_producer];
 connector_type_to_bridge_types(syskeeper_forwarder) -> [syskeeper_forwarder];

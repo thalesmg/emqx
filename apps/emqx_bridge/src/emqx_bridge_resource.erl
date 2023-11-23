@@ -108,6 +108,10 @@ parse_bridge_id(BridgeId) ->
     {atom(), atom() | binary()}.
 parse_bridge_id(<<"bridge:", ID/binary>>, Opts) ->
     parse_bridge_id(ID, Opts);
+parse_bridge_id(<<"action:", _/binary>> = ID, Opts) ->
+    {Type, Name} = emqx_bridge_v2:parse_id(ID),
+    %% for validations and transforming to atom, if necessary...
+    emqx_resource:parse_resource_id([Type, ":", Name], Opts);
 parse_bridge_id(BridgeId, Opts) ->
     {Type, Name} = emqx_resource:parse_resource_id(BridgeId, Opts),
     {emqx_bridge_lib:upgrade_type(Type), Name}.

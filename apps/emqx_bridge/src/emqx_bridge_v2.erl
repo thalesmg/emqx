@@ -780,7 +780,7 @@ parse_id(Id) ->
             {Type, Name};
         [<<"action">>, Type, Name | _] ->
             {Type, Name};
-        _X ->
+        _ ->
             error({error, iolist_to_binary(io_lib:format("Invalid id: ~p", [Id]))})
     end.
 
@@ -1135,16 +1135,22 @@ bridge_v1_lookup_and_transform_helper(
             case BridgeV2Status of
                 connected ->
                     %% No need to modify the status
-                    {ok, BridgeV1#{resource_data => ResourceData2}};
+                    {ok, BridgeV1#{
+                        resource_data => ResourceData2,
+                        status => BridgeV2Status
+                    }};
                 NotConnected ->
                     ResourceData3 = maps:put(status, NotConnected, ResourceData2),
                     ResourceData4 = maps:put(error, BridgeV2Error, ResourceData3),
                     BridgeV1Final = maps:put(resource_data, ResourceData4, BridgeV1),
-                    {ok, BridgeV1Final}
+                    {ok, BridgeV1Final#{status => BridgeV2Status}}
             end;
         _ ->
             %% No need to modify the status
-            {ok, BridgeV1#{resource_data => ResourceData2}}
+            {ok, BridgeV1#{
+                resource_data => ResourceData2,
+                status => BridgeV2Status
+            }}
     end.
 
 lookup_conf(Type, Name) ->

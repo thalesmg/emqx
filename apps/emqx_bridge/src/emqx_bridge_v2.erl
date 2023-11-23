@@ -1284,7 +1284,7 @@ split_and_validate_bridge_v1_config(BridgeV1Type, BridgeName, RawConf, PreviousR
     },
     try
         hocon_tconf:check_plain(
-            emqx_schema,
+            #{roots => emqx_connector_schema:roots() ++ emqx_bridge_v2_schema:roots()},
             NewFakeGlobalConfig,
             #{atom_key => false, required => false}
         )

@@ -55,7 +55,7 @@
 %% emqx_action_info:transform_bridge_v1_config_to_action_config/4 in your
 %% implementation and do some adjustments on the result.
 -callback bridge_v1_config_to_action_config(BridgeV1Config :: map(), ConnectorName :: binary()) ->
-    map().
+    map() | [map()].
 
 -optional_callbacks([
     bridge_v1_type_name/0,

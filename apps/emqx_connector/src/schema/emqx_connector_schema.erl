@@ -106,7 +106,7 @@ bridge_configs_to_transform(
             bridge_configs_to_transform(BridgeType, Rest, ConnectorFields, RawConfig)
     end.
 
-split_bridge_to_connector_and_action(
+split_bridge_to_connector_and_actions(
     {ConnectorsMap, {BridgeType, BridgeName, BridgeV1Conf, ConnectorFields, PreviousRawConfig}}
 ) ->
     ConnectorMap =
@@ -143,7 +143,7 @@ split_bridge_to_connector_and_action(
             #{<<"connector">> := ConnectorName0} -> ConnectorName0;
             _ -> generate_connector_name(ConnectorsMap, BridgeName, 0)
         end,
-    ActionMap =
+    ActionConfigs =
         case emqx_action_info:has_custom_bridge_v1_config_to_action_config(BridgeType) of
             true ->
                 emqx_action_info:bridge_v1_config_to_action_config(
@@ -154,7 +154,15 @@ split_bridge_to_connector_and_action(
                     BridgeV1Conf, ConnectorName, ConnectorFields
                 )
         end,
-    {BridgeType, BridgeName, ActionMap, ConnectorName, ConnectorMap}.
+    case is_list(ActionConfigs) of
+        true ->
+            [
+                {BridgeType, BridgeName, ActionConfig, ConnectorName, ConnectorMap}
+             || ActionConfig <- ActionConfigs
+            ];
+        false ->
+            [{BridgeType, BridgeName, ActionConfigs, ConnectorName, ConnectorMap}]
+    end.
 
 transform_bridge_v1_config_to_action_config(
     BridgeV1Conf, ConnectorName, ConnectorConfSchemaMod, ConnectorConfSchemaName
@@ -247,8 +255,8 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
         lists:duplicate(length(BridgeConfigsToTransform), ConnectorsWithTypeMap),
         BridgeConfigsToTransform
     ),
-    ActionConnectorTuples = lists:map(
-        fun split_bridge_to_connector_and_action/1,
+    ActionConnectorTuples = lists:flatmap(
+        fun split_bridge_to_connector_and_actions/1,
         BridgeConfigsToTransformWithConnectorConf
     ),
     %% Add connectors and actions and remove bridges
@@ -279,12 +287,11 @@ transform_old_style_bridges_to_connector_and_actions_of_type(
 
 transform_bridges_v1_to_connectors_and_bridges_v2(RawConfig) ->
     ConnectorFields = ?MODULE:fields(connectors),
-    NewRawConf = lists:foldl(
+    lists:foldl(
         fun transform_old_style_bridges_to_connector_and_actions_of_type/2,
         RawConfig,
         ConnectorFields
-    ),
-    NewRawConf.
+    ).
 
 %% v1 uses 'kafka' as bridge type v2 uses 'kafka_producer'
 maybe_rename(kafka) ->

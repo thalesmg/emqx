@@ -28,6 +28,7 @@
     get_streams/3,
     make_iterator/4,
     update_iterator/3,
+    get_iterator_info/2,
     next/3
 ]).
 
@@ -38,6 +39,7 @@
     do_get_streams_v1/4,
     do_make_iterator_v1/5,
     do_update_iterator_v2/4,
+    do_get_iterator_info_v2/3,
     do_next_v1/4
 ]).
 
@@ -119,7 +121,9 @@ open_db(DB, CreateOpts) ->
             maybe_set_myself_as_leader(DB, Shard)
         end,
         MyShards
-    ).
+    ),
+    %% TODO: wrap in another API/module?
+    emqx_ds_storage_layer_sup:ensure_cache(DB).
 
 -spec drop_db(emqx_ds:db()) -> ok | {error, _}.
 drop_db(DB) ->
@@ -196,8 +200,57 @@ update_iterator(DB, OldIter, DSKey) ->
             Err
     end.
 
+get_iterator_info(DB, Iter) ->
+    #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter} = Iter,
+    Node = node_of_shard(DB, Shard),
+    emqx_ds_proto_v2:get_iterator_info(
+        Node,
+        DB,
+        Shard,
+        StorageIter
+    ).
+
 -spec next(emqx_ds:db(), iterator(), pos_integer()) -> emqx_ds:next_result(iterator()).
 next(DB, Iter0, BatchSize) ->
+    %% #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
+    %% Node = node_of_shard(DB, Shard),
+    %% %% TODO: iterator can contain information that is useful for
+    %% %% reconstructing messages sent over the network. For example,
+    %% %% when we send messages with the learned topic index, we could
+    %% %% send the static part of topic once, and append it to the
+    %% %% messages on the receiving node, hence saving some network.
+    %% %%
+    %% %% This kind of trickery should be probably done here in the
+    %% %% replication layer. Or, perhaps, in the logic layer.
+    %% case emqx_ds_proto_v1:next(Node, DB, Shard, StorageIter0, BatchSize) of
+    %%     {ok, StorageIter, Batch} ->
+    %%         Iter = Iter0#{?enc := StorageIter},
+    %%         {ok, Iter, Batch};
+    %%     Other ->
+    %%         Other
+    %% end.
+    next_via_cache(DB, Iter0, BatchSize).
+
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
+next_via_cache(DB, Iter0, BatchSize) ->
+    %% TODO: check if cache is enabled for stream?
+    #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
+    case emqx_ds_cache:find_cached({DB, Shard}, StorageIter0, BatchSize) of
+        {full, StorageIter, Batch} ->
+            Iter = Iter0#{?enc := StorageIter},
+            {ok, Iter, Batch};
+        {partial, StreamID, StorageIter, Batch} ->
+            Iter = Iter0#{?enc := StorageIter},
+            %% FIXME: which size to use???
+            MaxBatchSize = 500,
+            FetchFn = fun() -> do_next(DB, Iter, MaxBatchSize) end,
+            emqx_ds_cache:fetch_more(DB, StreamID, FetchFn),
+            {ok, Iter, Batch}
+    end.
+
+do_next(DB, Iter0, BatchSize) ->
     #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
     Node = node_of_shard(DB, Shard),
     %% TODO: iterator can contain information that is useful for
@@ -215,6 +268,10 @@ next(DB, Iter0, BatchSize) ->
         Other ->
             Other
     end.
+
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
+%% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
 
 %%================================================================================
 %% behavior callbacks
@@ -273,6 +330,9 @@ do_update_iterator_v2(DB, Shard, OldIter, DSKey) ->
     emqx_ds_storage_layer:update_iterator(
         {DB, Shard}, OldIter, DSKey
     ).
+
+do_get_iterator_info_v2(DB, Shard, Iter) ->
+    emqx_ds_storage_layer:get_iterator_info({DB, Shard}, Iter).
 
 -spec do_next_v1(
     emqx_ds:db(),

@@ -31,6 +31,7 @@
     get_streams/4,
     make_iterator/5,
     update_iterator/4,
+    get_iterator_info/3,
     next/4
 ]).
 
@@ -257,6 +258,12 @@ update_iterator(
     DSKey
 ) ->
     {ok, OldIter#{?last_seen_key => DSKey}}.
+
+get_iterator_info(_Shard, _Data, #{?tag := ?IT, ?storage_key := StorageKey, ?last_seen_key := DSKey}) ->
+    #{last_seen_key => DSKey, stream_id_data => StorageKey}.
+
+stream_id(StorageKey) ->
+    erlang:md5(term_to_binary(StorageKey)).
 
 next(_Shard, Schema = #s{ts_offset = TSOffset}, It, BatchSize) ->
     %% Compute safe cutoff time.

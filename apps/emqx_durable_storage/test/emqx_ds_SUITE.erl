@@ -25,6 +25,9 @@
 
 -define(N_SHARDS, 1).
 
+suite() ->
+    [{timetrap, 5_000}].
+
 opts() ->
     #{
         backend => builtin,
@@ -100,6 +103,10 @@ t_03_smoke_iterate(_Config) ->
     ?assertMatch(ok, emqx_ds:store_batch(DB, Msgs)),
     [{_, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
+    %% empty cache
+    {ok, Iter0, []} = iterate(DB, Iter0, 1),
+    %% FIXME!!!!!!!!!!!!!!!!!!!
+    ct:sleep(500),
     {ok, Iter, Batch} = iterate(DB, Iter0, 1),
     ?assertEqual(Msgs, [Msg || {_Key, Msg} <- Batch], {Iter0, Iter}).
 
@@ -127,6 +134,10 @@ t_04_restart(_Config) ->
     {ok, _} = application:ensure_all_started(emqx_durable_storage),
     ok = emqx_ds:open_db(DB, opts()),
     %% The old iterator should be still operational:
+    %% empty cache
+    {ok, Iter0, []} = emqx_ds:next(DB, Iter0, 1),
+    %% FIXME!!!!!!!!!!!!!!!!!!!
+    ct:sleep(500),
     {ok, Iter, Batch} = iterate(DB, Iter0, 1),
     ?assertEqual(Msgs, [Msg || {_Key, Msg} <- Batch], {Iter0, Iter}).
 
@@ -144,6 +155,10 @@ t_05_update_iterator(_Config) ->
     ?assertMatch(ok, emqx_ds:store_batch(DB, Msgs)),
     [{_, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
+    %% empty cache
+    {ok, Iter0, []} = emqx_ds:next(DB, Iter0, 1),
+    %% FIXME!!!!!!!!!!!!!!!!!!!
+    ct:sleep(500),
     Res0 = emqx_ds:next(DB, Iter0, 1),
     ?assertMatch({ok, _OldIter, [{_Key0, _Msg0}]}, Res0),
     {ok, OldIter, [{Key0, Msg0}]} = Res0,

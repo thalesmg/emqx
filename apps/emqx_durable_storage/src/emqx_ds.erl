@@ -41,6 +41,7 @@
     topic/0,
     stream/0,
     stream_rank/0,
+    stream_id/0,
     iterator/0,
     message_id/0,
     message_key/0,
@@ -66,6 +67,8 @@
 -type topic_filter() :: list(binary() | '+' | '#' | '').
 
 -type stream_rank() :: {term(), integer()}.
+
+-type stream_id() :: term().
 
 -opaque iterator() :: ds_specific_iterator().
 

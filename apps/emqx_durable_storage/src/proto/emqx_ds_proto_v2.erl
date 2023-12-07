@@ -27,7 +27,8 @@
     next/5,
 
     %% introduced in v2
-    update_iterator/5
+    update_iterator/5,
+    get_iterator_info/4
 ]).
 
 %% behavior callbacks:
@@ -108,6 +109,11 @@ store_batch(Node, DB, Shard, Batch, Options) ->
 update_iterator(Node, DB, Shard, OldIter, DSKey) ->
     erpc:call(Node, emqx_ds_replication_layer, do_update_iterator_v2, [
         DB, Shard, OldIter, DSKey
+    ]).
+
+get_iterator_info(Node, DB, Shard, OldIter) ->
+    erpc:call(Node, emqx_ds_replication_layer, do_get_iterator_info_v1, [
+        DB, Shard, OldIter
     ]).
 
 %%================================================================================

@@ -25,6 +25,9 @@
     get_streams/3,
     make_iterator/4,
     update_iterator/3,
+    get_stream_id/2,
+    get_last_seen_key/2,
+    get_iterator_info/2,
     next/3
 ]).
 
@@ -220,6 +223,29 @@ update_iterator(
         {error, _} = Err ->
             Err
     end.
+
+get_stream_id(ShardId, #{?tag := ?IT, ?generation := GenId, ?enc := Iter}) ->
+    #{module := Mod, data := GenData} = generation_get(ShardId, GenId),
+    Mod:get_stream_id(ShardId, GenData, Iter).
+
+get_last_seen_key(Shard, #{?tag := ?IT, ?generation := GenId, ?enc := Iter}) ->
+    #{module := Mod, data := GenData} = generation_get(Shard, GenId),
+    Mod:get_last_seen_key(Shard, GenData, Iter).
+
+get_iterator_info(Shard, #{?tag := ?IT, ?generation := GenId, ?enc := Iter}) ->
+    #{module := Mod, data := GenData} = generation_get(Shard, GenId),
+    #{
+        last_seen_key := DSKey,
+        stream_id_data := Data
+    } = Mod:get_iterator_info(Shard, GenData, Iter),
+    %% FIXME: use integer keys?
+    #{
+        last_seen_key => DSKey,
+        stream_id => stream_id(Shard, GenId, Data)
+    }.
+
+stream_id(Shard, GenId, Data) ->
+    erlang:md5(term_to_binary({Shard, GenId, Data})).
 
 -spec next(shard_id(), iterator(), pos_integer()) ->
     emqx_ds:next_result(iterator()).

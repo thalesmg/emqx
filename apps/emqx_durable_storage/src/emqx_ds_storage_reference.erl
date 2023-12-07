@@ -34,6 +34,7 @@
     get_streams/4,
     make_iterator/5,
     update_iterator/4,
+    get_iterator_info/3,
     next/4
 ]).
 
@@ -115,6 +116,9 @@ update_iterator(_Shard, _Data, OldIter, DSKey) ->
         start_time = StartTime,
         last_seen_message_key = DSKey
     }}.
+
+get_iterator_info(_Shard, _Data, #it{last_seen_message_key = LastSeenKey}) ->
+    #{stream_id_data => <<>>, last_seen_key => LastSeenKey}.
 
 next(_Shard, #s{db = DB, cf = CF}, It0, BatchSize) ->
     #it{topic_filter = TopicFilter, start_time = StartTime, last_seen_message_key = Key0} = It0,

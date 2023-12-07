@@ -340,13 +340,32 @@ consume(TopicFilter, StartMS) ->
     ).
 
 consume(It) ->
-    case emqx_ds:next(?PERSISTENT_MESSAGE_DB, It, 100) of
-        {ok, _NIt, _Msgs = []} ->
-            [];
-        {ok, NIt, MsgsAndKeys} ->
-            [Msg || {_DSKey, Msg} <- MsgsAndKeys] ++ consume(NIt);
-        {ok, end_of_stream} ->
-            []
+    %% FIXMEEEEEEEEEEEE
+    case get(warmed_up_cache) of
+        undefined ->
+            put(warmed_up_cache, false);
+        _ ->
+            ok
+    end,
+    try
+        case emqx_ds:next(?PERSISTENT_MESSAGE_DB, It, 100) of
+            {ok, _NIt, _Msgs = []} ->
+                case get(warmed_up_cache) of
+                    true ->
+                        [];
+                    false ->
+                        put(warmed_up_cache, true),
+                        %% FIXMEEEEEEEEEEEE
+                        ct:sleep(500),
+                        consume(It)
+                end;
+            {ok, NIt, MsgsAndKeys} ->
+                [Msg || {_DSKey, Msg} <- MsgsAndKeys] ++ consume(NIt);
+            {ok, end_of_stream} ->
+                []
+        end
+    after
+        erase(warmed_up_cache)
     end.
 
 receive_messages(Count) ->

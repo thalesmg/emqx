@@ -21,8 +21,6 @@
 
 -behaviour(gen_server).
 
--include_lib("stdlib/include/ms_transform.hrl").
-
 %% API
 -export([
     start_link/1,
@@ -180,35 +178,27 @@ find_cached(ShardId = {DB, _Shard}, OldIter, BatchSize) ->
         stream_id := StreamID,
         last_seen_key := LastSeenKey
     } = emqx_ds_storage_layer:get_iterator_info(ShardId, OldIter),
-    find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey, more, BatchSize, []).
+    find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey, BatchSize, []).
 
-find_cached(_Table, ShardId, _StreamID, OldIter, LastSeenKey, _SelectRes, _Remaining = 0, Acc) ->
+find_cached(_Table, ShardId, _StreamID, OldIter, LastSeenKey, _Remaining = 0, Acc) ->
     {ok, It} = emqx_ds_storage_layer:make_iterator_from_key(ShardId, OldIter, LastSeenKey),
     {full, It, lists:reverse(Acc)};
-find_cached(_Table, ShardId, StreamID, OldIter, LastSeenKey0, '$end_of_table', _Remaining, Acc) ->
-    {ok, It} = emqx_ds_storage_layer:make_iterator_from_key(ShardId, OldIter, LastSeenKey0),
-    {partial, StreamID, It, lists:reverse(Acc)};
-find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey0, {[], Cont}, Remaining, Acc) ->
-    SelectRes = ets:select(Cont),
-    find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey0, SelectRes, Remaining, Acc);
-find_cached(Table, ShardId, StreamID, OldIter, _LastSeenKey0, {Msgs, _Cont}, Remaining0, Acc) ->
-    NumMsgs = length(Msgs),
-    Remaining = Remaining0 - NumMsgs,
-    {LastSeenKey, _Msg} = lists:last(Msgs),
-    find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey, more, Remaining, Acc ++ Msgs);
-find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey0, more, Remaining0, Acc) ->
-    MS = find_ms(StreamID, LastSeenKey0),
-    SelectRes = ets:select(Table, MS, Remaining0),
-    find_cached(Table, ShardId, StreamID, OldIter, LastSeenKey0, SelectRes, Remaining0, Acc).
-
-find_ms(StreamID, LastSeenKey) ->
-    ets:fun2ms(
-        fun(#entry{key = ?KEY(SID, K), message = Msg}) when
-            SID == StreamID andalso K > LastSeenKey
-        ->
-            {K, Msg}
-        end
-    ).
+find_cached(Table, {DB, Shard} = ShardId, StreamID, OldIter, LastSeenKey0, Remaining, Acc) ->
+    %% TODO: handle badarg?
+    case ets:next(Table, ?KEY(StreamID, LastSeenKey0)) of
+        '$end_of_table' ->
+            {ok, It} = emqx_ds_storage_layer:make_iterator_from_key(ShardId, OldIter, LastSeenKey0),
+            {partial, StreamID, It, lists:reverse(Acc)};
+        ?KEY(StreamID, DSKey) ->
+            %% TODO: handle badarg?
+            Msg = ets:lookup_element(Table, ?KEY(StreamID, DSKey), #entry.message),
+            find_cached(Table, {DB, Shard}, StreamID, OldIter, DSKey, Remaining - 1, [
+                {DSKey, Msg} | Acc
+            ]);
+        ?KEY(_OtherStreamID, _DSKey) ->
+            {ok, It} = emqx_ds_storage_layer:make_iterator_from_key(ShardId, OldIter, LastSeenKey0),
+            {partial, StreamID, It, lists:reverse(Acc)}
+    end.
 
 cache_batch(DB, StreamID, Batch) ->
     Now = now_ms(),

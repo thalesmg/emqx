@@ -144,6 +144,9 @@ next(_Shard, #s{db = DB, cf = CF}, It0, BatchSize) ->
     {Key, Messages} = do_next(TopicFilter, StartTime, ITHandle, Action, BatchSize, Key0, []),
     rocksdb:iterator_close(ITHandle),
     It = It0#it{last_seen_message_key = Key},
+    ct:pal("~p>>>>>>>\n  ~p", [
+        {?MODULE, ?LINE}, #{batch => Messages, it0 => It0, it => It, last => Key}
+    ]),
     {ok, It, lists:reverse(Messages)}.
 
 %%================================================================================
@@ -158,8 +161,10 @@ do_next(TopicFilter, StartTime, IT, Action, NLeft, Key0, Acc) ->
             Msg = #message{topic = Topic, timestamp = TS} = binary_to_term(Blob),
             case emqx_topic:match(Topic, TopicFilter) andalso TS >= StartTime of
                 true ->
+                    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{msg => emqx_message:to_map(Msg)}]),
                     do_next(TopicFilter, StartTime, IT, next, NLeft - 1, Key, [{Key, Msg} | Acc]);
                 false ->
+                    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{msg => emqx_message:to_map(Msg)}]),
                     do_next(TopicFilter, StartTime, IT, next, NLeft, Key, Acc)
             end;
         {error, invalid_iterator} ->

@@ -237,7 +237,7 @@ next(DB, Iter0, BatchSize) ->
 next_via_cache(DB, Iter0, BatchSize) ->
     %% TODO: check if cache is enabled for stream?
     #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
-    FetchFn = fun(Iter, Size) -> do_next({DB, Shard}, Iter0, Iter, Size) end,
+    FetchFn = fun(Iter, Size) -> do_next({DB, Shard}, Iter, Size) end,
     case emqx_ds_cache:next({DB, Shard}, StorageIter0, BatchSize, FetchFn) of
         {ok, StorageIter, Batch} ->
             Iter = Iter0#{?enc := StorageIter},
@@ -247,7 +247,7 @@ next_via_cache(DB, Iter0, BatchSize) ->
             Error
     end.
 
-do_next({DB, Shard}, Iter0, StorageIter0, BatchSize) ->
+do_next({DB, Shard}, StorageIter0, BatchSize) ->
     Node = node_of_shard(DB, Shard),
     %% TODO: iterator can contain information that is useful for
     %% reconstructing messages sent over the network. For example,
@@ -257,13 +257,7 @@ do_next({DB, Shard}, Iter0, StorageIter0, BatchSize) ->
     %%
     %% This kind of trickery should be probably done here in the
     %% replication layer. Or, perhaps, in the logic layer.
-    case emqx_ds_proto_v1:next(Node, DB, Shard, StorageIter0, BatchSize) of
-        {ok, StorageIter, Batch} ->
-            Iter = Iter0#{?enc := StorageIter},
-            {ok, Iter, Batch};
-        Other ->
-            Other
-    end.
+    emqx_ds_proto_v1:next(Node, DB, Shard, StorageIter0, BatchSize).
 
 %% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<
 %% >>>>>>>>>>>>>>>> FIXME <<<<<<<<<<<<<<<

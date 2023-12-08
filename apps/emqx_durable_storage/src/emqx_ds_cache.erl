@@ -42,6 +42,9 @@
     handle_info/2
 ]).
 
+%% debugging
+-export([dump_cache/1, dump_meta/1]).
+
 -type key() :: {_Stream, _DSKey}.
 -type row() :: {key(), _InsertionTime, _Message}.
 -type state() ::
@@ -54,15 +57,6 @@
 -define(KEY(STREAM, DSKEY), {STREAM, {DSKEY}}).
 -define(EOS_MARKER, []).
 -define(EOS(STREAM), {STREAM, ?EOS_MARKER}).
-
-%% state
--record(entry, {
-    key,
-    inserted_at,
-    next_key,
-    prev_key,
-    message
-}).
 
 %% call/cast/info records
 -record(fetch_more, {
@@ -102,8 +96,9 @@ next({DB, Shard}, StorageIter0, BatchSize, FetchFn) ->
         {full, StorageIter, Batch} ->
             {ok, StorageIter, Batch};
         {partial, IterInfo, StorageIter, Batch} ->
-            %% FIXME: which size to use???
-            MaxBatchSize = 500,
+            %% FIXME: which size to use???  Fetch a bit more?
+            %% MaxBatchSize = 500,
+            MaxBatchSize = BatchSize,
             fetch_more(DB, IterInfo, StorageIter, MaxBatchSize, FetchFn),
             {ok, StorageIter, Batch}
     end.
@@ -119,7 +114,7 @@ clear_cache() ->
 init(Opts) ->
     process_flag(trap_exit, true),
     #{db := DB} = Opts,
-    create_table(DB),
+    create_cache(DB),
     State = #{
         db => DB,
         fetching => #{}
@@ -127,7 +122,7 @@ init(Opts) ->
     {ok, State}.
 
 terminate(_Reason, _State = #{db := DB}) ->
-    drop_table(DB),
+    drop_cache(DB),
     ok.
 
 handle_call(_Call, _From, State) ->
@@ -170,6 +165,7 @@ handle_cast(
 ) when
     is_map_key(StreamID, Fetching0)
 ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{iter_info => IterInfo, batch => Batch}]),
     cache_batch(DB, IterInfo, Batch),
     Fetching = maps:remove(StreamID, Fetching0),
     {noreply, State0#{fetching := Fetching}};
@@ -185,10 +181,25 @@ handle_info(_Info, State) ->
 
 -define(ptkey(DB), {?MODULE, DB}).
 -define(cache(DB), (persistent_term:get(?ptkey(DB)))).
+-define(meta(DB), (persistent_term:get(?ptkey({meta, DB})))).
 
--spec create_table(emqx_ds:db()) -> ok.
-create_table(DB) ->
-    Tid = ets:new(
+-record(entry, {
+    key,
+    inserted_at,
+    next_key,
+    prev_key,
+    message
+}).
+
+-record(meta_entry, {
+    marker,
+    inserted_at,
+    key
+}).
+
+-spec create_cache(emqx_ds:db()) -> ok.
+create_cache(DB) ->
+    CacheTid = ets:new(
         emqx_ds_cache,
         [
             ordered_set,
@@ -197,12 +208,22 @@ create_table(DB) ->
             {read_concurrency, true}
         ]
     ),
-    persistent_term:put(?ptkey(DB), Tid),
+    MetaTid = ets:new(
+        emqx_ds_cache_meta,
+        [
+            ordered_set,
+            public,
+            {keypos, #meta_entry.marker},
+            {read_concurrency, true}
+        ]
+    ),
+    persistent_term:put(?ptkey(DB), CacheTid),
+    persistent_term:put(?ptkey({meta, DB}), MetaTid),
     ok.
 
-drop_table(DB) ->
-    ets:delete(?cache(DB)),
+drop_cache(DB) ->
     persistent_term:erase(?ptkey(DB)),
+    persistent_term:erase(?ptkey({meta, DB})),
     ok.
 
 -record(fetch_state, {
@@ -233,10 +254,31 @@ find_cached(ShardId = {DB, _Shard}, OldIter, BatchSize) ->
         original_iterator = OldIter,
         iterator_info = IterInfo,
         last_seen_ds_key = LastSeenKey,
-        current_cache_key = ets:next(Table, ?KEY(StreamID, LastSeenKey)),
+        current_cache_key = starting_key(DB, IterInfo),
         remaining = BatchSize,
         acc = []
     },
+    ct:pal("~p>>>>>>>\n  ~p", [
+        {?MODULE, ?LINE},
+        #{
+            initial_state => export_record(
+                State,
+                2,
+                [
+                    table,
+                    shard_id,
+                    stream_id,
+                    original_iterator,
+                    iterator_info,
+                    last_seen_ds_key,
+                    current_cache_key,
+                    remaining,
+                    acc
+                ],
+                #{}
+            )
+        }
+    ]),
     find_cached(State).
 
 find_cached(#fetch_state{
@@ -246,17 +288,18 @@ find_cached(#fetch_state{
     last_seen_ds_key = LastSeenDSKey,
     acc = Acc
 }) ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     {ok, It} = emqx_ds_storage_layer:update_iterator(ShardId, OldIter, LastSeenDSKey),
     {full, It, lists:reverse(Acc)};
 find_cached(#fetch_state{
     current_cache_key = '$end_of_table',
-    stream_id = StreamID,
     shard_id = ShardId,
     original_iterator = OldIter,
     iterator_info = IterInfo0,
     last_seen_ds_key = LastSeenDSKey,
     acc = Acc
 }) ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     IterInfo = IterInfo0#{last_seen_key := LastSeenDSKey},
     {ok, It} = emqx_ds_storage_layer:update_iterator(ShardId, OldIter, LastSeenDSKey),
     {partial, IterInfo, It, lists:reverse(Acc)};
@@ -273,11 +316,24 @@ find_cached(
         acc = Acc0
     } = State0
 ) ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     case ets:lookup(Table, K) of
         [#entry{prev_key = {first, _} = Marker, next_key = NextDSKey, message = Msg}] ->
             ExpectedMarker = first_entry_marker(IterInfo0),
+            ct:pal("~p>>>>>>>\n  ~p", [
+                {?MODULE, ?LINE},
+                #{
+                    marker_expected => ExpectedMarker,
+                    marker => Marker,
+                    last => LastSeenDSKey0,
+                    iter_info => IterInfo0,
+                    k => K,
+                    msg => emqx_message:to_map(Msg)
+                }
+            ]),
             case Marker =:= ExpectedMarker of
                 true ->
+                    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
                     Acc = [{DSKey, Msg} | Acc0],
                     Remaining = Remaining0 - 1,
                     State = State0#fetch_state{
@@ -288,6 +344,7 @@ find_cached(
                     },
                     find_cached(State);
                 false ->
+                    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
                     IterInfo = IterInfo0#{last_seen_key := LastSeenDSKey0},
                     {ok, It} = emqx_ds_storage_layer:update_iterator(
                         ShardId, OldIter, LastSeenDSKey0
@@ -295,6 +352,7 @@ find_cached(
                     {partial, IterInfo, It, lists:reverse(Acc0)}
             end;
         [#entry{prev_key = LastSeenDSKey0, next_key = NextDSKey, message = Msg}] ->
+            ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
             Acc = [{DSKey, Msg} | Acc0],
             Remaining = Remaining0 - 1,
             State = State0#fetch_state{
@@ -305,6 +363,7 @@ find_cached(
             },
             find_cached(State);
         _ ->
+            ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
             %% Either there's no next entry, or the next entry is not the expected
             %% next message (there's a hole in the cache)
             IterInfo = IterInfo0#{last_seen_key := LastSeenDSKey0},
@@ -320,6 +379,7 @@ find_cached(#fetch_state{
     last_seen_ds_key = LastSeenDSKey,
     acc = Acc
 }) ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     %% The current cache key belongs to a different stream.
     IterInfo = IterInfo0#{last_seen_key := LastSeenDSKey},
     {ok, It} = emqx_ds_storage_layer:update_iterator(ShardId, OldIter, LastSeenDSKey),
@@ -332,7 +392,8 @@ cache_batch(DB, IterInfo, Batch = [_First | Tail]) ->
     %% detect holes in the cache.
     Now = now_ms(),
     #{last_seen_key := PreviousLastSeenKey} = IterInfo,
-    Entries0 = to_entries(IterInfo, Now, PreviousLastSeenKey, Batch, Tail),
+    Entries0 = to_entries(DB, IterInfo, Now, PreviousLastSeenKey, Batch, Tail),
+    maybe_insert_marker_pointer(DB, Now, Entries0),
     Entries = maybe_fuse_with_previous(DB, PreviousLastSeenKey, Entries0),
     ets:insert(?cache(DB), Entries),
     ok.
@@ -340,7 +401,7 @@ cache_batch(DB, IterInfo, Batch = [_First | Tail]) ->
 now_ms() ->
     erlang:system_time(millisecond).
 
-to_entries(IterInfo = #{stream_id := StreamID}, Now, PrevDSKey, [{DSKey, Msg} | Rest1], [
+to_entries(DB, IterInfo = #{stream_id := StreamID}, Now, PrevDSKey, [{DSKey, Msg} | Rest1], [
     {NextDSKey, _} | Rest2
 ]) ->
     [
@@ -348,25 +409,27 @@ to_entries(IterInfo = #{stream_id := StreamID}, Now, PrevDSKey, [{DSKey, Msg} | 
             key = ?KEY(StreamID, DSKey),
             inserted_at = Now,
             next_key = NextDSKey,
-            prev_key = maybe_first_entry_marker(PrevDSKey, IterInfo),
+            prev_key = maybe_first_entry_marker(DB, Now, DSKey, PrevDSKey, IterInfo),
             message = Msg
         }
-        | to_entries(IterInfo, Now, DSKey, Rest1, Rest2)
+        | to_entries(DB, IterInfo, Now, DSKey, Rest1, Rest2)
     ];
-to_entries(IterInfo = #{stream_id := StreamID}, Now, PrevDSKey, [{DSKey, Msg}], []) ->
+to_entries(DB, IterInfo = #{stream_id := StreamID}, Now, PrevDSKey, [{DSKey, Msg}], []) ->
     [
         #entry{
             key = ?KEY(StreamID, DSKey),
             inserted_at = Now,
             next_key = undefined,
-            prev_key = maybe_first_entry_marker(PrevDSKey, IterInfo),
+            prev_key = maybe_first_entry_marker(DB, Now, DSKey, PrevDSKey, IterInfo),
             message = Msg
         }
     ].
 
-maybe_first_entry_marker(PreviousLastSeenKey, _IterInfo) when is_binary(PreviousLastSeenKey) ->
+maybe_first_entry_marker(_DB, _Now, _DSKey, PreviousLastSeenKey, _IterInfo) when
+    is_binary(PreviousLastSeenKey)
+->
     PreviousLastSeenKey;
-maybe_first_entry_marker(_PreviousLastSeenKey, IterInfo) ->
+maybe_first_entry_marker(_DB, _Now, _DSKey, _PreviousLastSeenKey, IterInfo) ->
     first_entry_marker(IterInfo).
 
 first_entry_marker(IterInfo) ->
@@ -377,6 +440,14 @@ first_entry_marker(IterInfo) ->
         start_time := StartTime
     } = IterInfo,
     {first, erlang:md5(term_to_binary({TopicFilter, StartTime}))}.
+
+maybe_insert_marker_pointer(DB, Now, [
+    #entry{key = ?KEY(_, DSKey), prev_key = {first, _} = Marker} | _
+]) ->
+    ets:insert(?meta(DB), #meta_entry{marker = Marker, inserted_at = Now, key = DSKey}),
+    ok;
+maybe_insert_marker_pointer(_DB, _Now, _Entries) ->
+    ok.
 
 maybe_fuse_with_previous(_DB, _PreviousLastSeenKey = undefined, Entries) ->
     Entries;
@@ -390,5 +461,43 @@ maybe_fuse_with_previous(
             Entries
     end.
 
-normalize_ds_key(DSKey) when is_binary(DSKey) -> DSKey;
-normalize_ds_key(_) -> undefined.
+starting_key(DB, #{stream_id := StreamID, last_seen_key := LastSeenDSKey}) when
+    is_binary(LastSeenDSKey)
+->
+    ets:next(?cache(DB), ?KEY(StreamID, LastSeenDSKey));
+starting_key(DB, IterInfo = #{stream_id := StreamID}) ->
+    Marker = first_entry_marker(IterInfo),
+    case ets:lookup(?meta(DB), Marker) of
+        [#meta_entry{key = Key}] ->
+            ?KEY(StreamID, Key);
+        _ ->
+            %% cannot guess correct starting point...  try from the beginning
+            ?KEY(StreamID, <<"">>)
+    end.
+
+%% for debugging
+dump_cache(DB) ->
+    [
+        export_entry(Entry)
+     || Entry <- ets:tab2list(?cache(DB))
+    ].
+
+%% for debugging
+dump_meta(DB) ->
+    [
+        export_meta_entry(MetaEntry)
+     || MetaEntry <- ets:tab2list(?meta(DB))
+    ].
+
+export_entry(#entry{} = Entry) ->
+    Fields = record_info(fields, entry),
+    export_record(Entry, 2, Fields, #{}).
+
+export_meta_entry(#meta_entry{} = MetaEntry) ->
+    Fields = record_info(fields, meta_entry),
+    export_record(MetaEntry, 2, Fields, #{}).
+
+export_record(Record, I, [Field | Rest], Acc) ->
+    export_record(Record, I + 1, Rest, Acc#{Field => element(I, Record)});
+export_record(_, _, [], Acc) ->
+    Acc.

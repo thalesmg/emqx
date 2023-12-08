@@ -103,13 +103,6 @@ t_03_smoke_iterate(_Config) ->
     ?assertMatch(ok, emqx_ds:store_batch(DB, Msgs)),
     [{_, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
-    %% empty cache
-    {ok, Iter0, []} = iterate(DB, Iter0, 1),
-    %% FIXME!!!!!!!!!!!!!!!!!!!
-    ct:sleep(500),
-    redbug:start([
-        "emqx_ds_cache:find_cached -> return", "emqx_ds_cache:fetched", "emqx_ds_cache:cache_batch"
-    ]),
     {ok, Iter, Batch} = iterate(DB, Iter0, 1),
     ?assertEqual(Msgs, [Msg || {_Key, Msg} <- Batch], {Iter0, Iter}).
 
@@ -182,16 +175,34 @@ message(Topic, Payload, PublishedAt) ->
     }.
 
 iterate(DB, It, BatchSize) ->
-    iterate(DB, It, BatchSize, []).
+    %% FIXME: tidy up...
+    do_consume(DB, It, BatchSize, {4, 4}, []).
 
-iterate(DB, It0, BatchSize, Acc) ->
-    case emqx_ds:next(DB, It0, BatchSize) of
-        {ok, It, []} ->
-            {ok, It, Acc};
-        {ok, It, Msgs} ->
-            iterate(DB, It, BatchSize, Acc ++ Msgs);
-        Ret ->
-            Ret
+%% iterate(DB, It, BatchSize) ->
+%%     iterate(DB, It, BatchSize, []).
+
+%% iterate(DB, It0, BatchSize, Acc) ->
+%%     case emqx_ds:next(DB, It0, BatchSize) of
+%%         {ok, It, []} ->
+%%             {ok, It, Acc};
+%%         {ok, It, Msgs} ->
+%%             iterate(DB, It, BatchSize, Acc ++ Msgs);
+%%         Ret ->
+%%             Ret
+%%     end.
+
+do_consume(_DB, Iter0, _BatchSize, _AttemptsPerNext = {0, _}, Acc) ->
+    ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
+    {ok, Iter0, Acc};
+do_consume(DB, Iter0, BatchSize, {AttemptsPerNext, DefaultRetries}, Acc) ->
+    case emqx_ds:next(DB, Iter0, BatchSize) of
+        {ok, Iter, []} ->
+            ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
+            ct:sleep(50),
+            do_consume(DB, Iter, BatchSize, {AttemptsPerNext - 1, DefaultRetries}, Acc);
+        {ok, Iter, Batch} ->
+            ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
+            do_consume(DB, Iter, BatchSize, {DefaultRetries, DefaultRetries}, Acc ++ Batch)
     end.
 
 %% CT callbacks

@@ -234,15 +234,12 @@ get_last_seen_key(Shard, #{?tag := ?IT, ?generation := GenId, ?enc := Iter}) ->
 
 get_iterator_info(Shard, #{?tag := ?IT, ?generation := GenId, ?enc := Iter}) ->
     #{module := Mod, data := GenData} = generation_get(Shard, GenId),
-    #{
-        last_seen_key := DSKey,
-        stream_id_data := Data
-    } = Mod:get_iterator_info(Shard, GenData, Iter),
+    #{stream_id_data := Data} = Info = Mod:get_iterator_info(Shard, GenData, Iter),
     %% FIXME: use integer keys?
-    #{
-        last_seen_key => DSKey,
-        stream_id => stream_id(Shard, GenId, Data)
-    }.
+    maps:merge(
+        #{stream_id => stream_id(Shard, GenId, Data)},
+        maps:with([last_seen_key, topic_filter, start_time], Info)
+    ).
 
 stream_id(Shard, GenId, Data) ->
     erlang:md5(term_to_binary({Shard, GenId, Data})).

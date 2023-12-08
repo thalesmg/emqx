@@ -107,6 +107,9 @@ t_03_smoke_iterate(_Config) ->
     {ok, Iter0, []} = iterate(DB, Iter0, 1),
     %% FIXME!!!!!!!!!!!!!!!!!!!
     ct:sleep(500),
+    redbug:start([
+        "emqx_ds_cache:find_cached -> return", "emqx_ds_cache:fetched", "emqx_ds_cache:cache_batch"
+    ]),
     {ok, Iter, Batch} = iterate(DB, Iter0, 1),
     ?assertEqual(Msgs, [Msg || {_Key, Msg} <- Batch], {Iter0, Iter}).
 
@@ -196,6 +199,8 @@ iterate(DB, It0, BatchSize, Acc) ->
 all() -> emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
+    emqx_common_test_helpers:clear_screen(),
+
     Apps = emqx_cth_suite:start(
         [mria, emqx_durable_storage],
         #{work_dir => ?config(priv_dir, Config)}

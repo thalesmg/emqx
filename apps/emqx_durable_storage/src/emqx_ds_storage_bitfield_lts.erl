@@ -259,8 +259,20 @@ update_iterator(
 ) ->
     {ok, OldIter#{?last_seen_key => DSKey}}.
 
-get_iterator_info(_Shard, _Data, #{?tag := ?IT, ?storage_key := StorageKey, ?last_seen_key := DSKey}) ->
-    #{last_seen_key => DSKey, stream_id_data => StorageKey}.
+get_iterator_info(_Shard, _Data, #{?tag := ?IT} = It) ->
+    #{
+        ?tag := ?IT,
+        ?topic_filter := TopicFilter,
+        ?start_time := StartTime,
+        ?storage_key := StorageKey,
+        ?last_seen_key := DSKey
+    } = It,
+    #{
+        last_seen_key => DSKey,
+        topic_filter => TopicFilter,
+        start_time => StartTime,
+        stream_id_data => StorageKey
+    }.
 
 stream_id(StorageKey) ->
     erlang:md5(term_to_binary(StorageKey)).

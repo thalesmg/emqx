@@ -237,21 +237,17 @@ next(DB, Iter0, BatchSize) ->
 next_via_cache(DB, Iter0, BatchSize) ->
     %% TODO: check if cache is enabled for stream?
     #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
-    case emqx_ds_cache:find_cached({DB, Shard}, StorageIter0, BatchSize) of
-        {full, StorageIter, Batch} ->
+    FetchFn = fun(Iter, Size) -> do_next({DB, Shard}, Iter0, Iter, Size) end,
+    case emqx_ds_cache:next({DB, Shard}, StorageIter0, BatchSize, FetchFn) of
+        {ok, StorageIter, Batch} ->
             Iter = Iter0#{?enc := StorageIter},
             {ok, Iter, Batch};
-        {partial, StreamID, StorageIter, Batch} ->
-            Iter = Iter0#{?enc := StorageIter},
-            %% FIXME: which size to use???
-            MaxBatchSize = 500,
-            FetchFn = fun() -> do_next(DB, Iter, MaxBatchSize) end,
-            emqx_ds_cache:fetch_more(DB, StreamID, FetchFn),
-            {ok, Iter, Batch}
+        Error ->
+            %% TODO: EoS
+            Error
     end.
 
-do_next(DB, Iter0, BatchSize) ->
-    #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0} = Iter0,
+do_next({DB, Shard}, Iter0, StorageIter0, BatchSize) ->
     Node = node_of_shard(DB, Shard),
     %% TODO: iterator can contain information that is useful for
     %% reconstructing messages sent over the network. For example,

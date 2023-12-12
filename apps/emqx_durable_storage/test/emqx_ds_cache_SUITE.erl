@@ -73,6 +73,21 @@ open_db(DB, Opts) ->
     on_exit(fun() -> ok = emqx_ds:drop_db(DB) end),
     ok.
 
+consecutive_messages(Opts) ->
+    #{
+        n := N,
+        topic := Topic
+    } = Opts,
+    StartTime = maps:get(start_time, Opts, erlang:system_time(millisecond)),
+    StartNum = maps:get(start_num, Opts, 1),
+    lists:map(
+        fun(M) ->
+            Msg = emqx_message:make(Topic, integer_to_binary(M)),
+            Msg#message{timestamp = StartTime + M - StartNum}
+        end,
+        lists:seq(StartNum, StartNum + N - 1)
+    ).
+
 shift_times(TShift, Messages0) ->
     {Messages, _} =
         lists:mapfoldl(
@@ -87,29 +102,35 @@ shift_times(TShift, Messages0) ->
 get_block_start_time([#message{timestamp = StartTime} | _]) ->
     StartTime.
 
+get_block_end_time(Msgs) ->
+    #message{timestamp = StartTime} = lists:last(Msgs),
+    StartTime.
+
 consume(DB, TopicFilter, StartTime, Opts) ->
     #{n := N} = Opts,
+    BatchSize = maps:get(batch_size, Opts, N),
     AttemptsPerNext = maps:get(attempts, Opts, 4),
     [{_Rank, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
     {ok, Iter} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
-    do_consume(DB, Iter, N, {AttemptsPerNext, AttemptsPerNext}).
+    do_consume(DB, Iter, BatchSize, N, {AttemptsPerNext, AttemptsPerNext}).
 
-do_consume(_DB, _Iter0, _N = 0, _AttemptsPerNext) ->
+do_consume(_DB, _Iter0, _BatchSize, N, _AttemptsPerNext) when N =< 0 ->
     ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     [];
-do_consume(_DB, _Iter0, _N, _AttemptsPerNext = {0, _}) ->
+do_consume(_DB, _Iter0, _BatchSize, _N, _AttemptsPerNext = {0, _}) ->
     ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
     [];
-do_consume(DB, Iter0, N, {AttemptsPerNext, DefaultRetries}) ->
-    case emqx_ds:next(DB, Iter0, N) of
+do_consume(DB, Iter0, BatchSize, N, {AttemptsPerNext, DefaultRetries}) ->
+    Size = max(BatchSize, N - BatchSize),
+    case emqx_ds:next(DB, Iter0, Size) of
         {ok, Iter, []} ->
             ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
             ct:sleep(100),
-            do_consume(DB, Iter, N, {AttemptsPerNext - 1, DefaultRetries});
+            do_consume(DB, Iter, BatchSize, N, {AttemptsPerNext - 1, DefaultRetries});
         {ok, Iter, Batch} ->
             ct:pal("~p>>>>>>>\n  ~p", [{?MODULE, ?LINE}, #{}]),
             NumBatch = length(Batch),
-            Batch ++ do_consume(DB, Iter, N - NumBatch, {DefaultRetries, DefaultRetries})
+            Batch ++ do_consume(DB, Iter, BatchSize, N - NumBatch, {DefaultRetries, DefaultRetries})
     end.
 
 %%------------------------------------------------------------------------------
@@ -130,28 +151,30 @@ t_cache_holes_1(_Config) ->
             TShift1 = 0,
             Messages1 = shift_times(TShift1, [
                 emqx_message:make(Topic, <<"1">>),
-                emqx_message:make(Topic, <<"2">>)
+                emqx_message:make(Topic, <<"2">>),
+                emqx_message:make(Topic, <<"3">>)
             ]),
             ok = emqx_ds:store_batch(DB, Messages1),
             StartTime1 = get_block_start_time(Messages1),
 
             TShift2 = 100_000,
             Messages2 = shift_times(TShift2, [
-                emqx_message:make(Topic, <<"3">>),
-                emqx_message:make(Topic, <<"4">>)
+                emqx_message:make(Topic, <<"4">>),
+                emqx_message:make(Topic, <<"5">>),
+                emqx_message:make(Topic, <<"6">>)
             ]),
             ok = emqx_ds:store_batch(DB, Messages2),
             StartTime2 = get_block_start_time(Messages2),
 
             TopicFilter = <<"some/+">>,
-            Fetched1 = consume(DB, TopicFilter, StartTime1, #{n => 2}),
-            ct:pal("fetching2"),
-            Fetched2 = consume(DB, TopicFilter, StartTime2, #{n => 2}),
+            %% fetch 2nd batch first
+            Fetched2 = consume(DB, TopicFilter, StartTime2, #{n => 3}),
+            Fetched1 = consume(DB, TopicFilter, StartTime1, #{n => 3}),
 
             ?assertEqual(Messages1, [Msg || {_, Msg} <- Fetched1]),
             ?assertEqual(Messages2, [Msg || {_, Msg} <- Fetched2]),
 
-            Fetched3 = consume(DB, TopicFilter, StartTime1, #{n => 4}),
+            Fetched3 = consume(DB, TopicFilter, StartTime1, #{n => 6}),
             ?assertEqual(Messages1 ++ Messages2, [Msg || {_, Msg} <- Fetched3]),
 
             %% ?assert(false, #{ fetched1 => Fetched1, fetched2 => Fetched2
@@ -170,13 +193,45 @@ t_cache_holes_2(_Config) ->
     %%                        V
     %% --------------|xxxxxxxx|yyyyyyy|-------------->
     %%                  c1        c2
+    DB = ?FUNCTION_NAME,
+    ok = open_db(DB),
     ?check_trace(
         begin
+            Topic = <<"some/topic">>,
+
+            StartTime1 = 1_000,
+            Messages1 = consecutive_messages(#{
+                n => 3,
+                topic => Topic,
+                start_time => StartTime1
+            }),
+            ok = emqx_ds:store_batch(DB, Messages1),
+
+            StartTime2 = get_block_end_time(Messages1) + 1,
+            Messages2 = consecutive_messages(#{
+                n => 3,
+                topic => Topic,
+                start_num => 4,
+                start_time => StartTime2
+            }),
+            ok = emqx_ds:store_batch(DB, Messages2),
+
+            TopicFilter = <<"some/+">>,
+            %% fetch 2nd batch first
+            %% TODO: switch as well
+            Fetched2 = consume(DB, TopicFilter, StartTime2, #{n => 3}),
+            Fetched1 = consume(DB, TopicFilter, StartTime1, #{n => 3}),
+
+            ?assertEqual(Messages1, [Msg || {_, Msg} <- Fetched1]),
+            ?assertEqual(Messages2, [Msg || {_, Msg} <- Fetched2]),
+
+            Fetched3 = consume(DB, TopicFilter, StartTime1, #{n => 6}),
+            ?assertEqual(Messages1 ++ Messages2, [Msg || {_, Msg} <- Fetched3]),
+
             ok
         end,
         []
     ),
-    ct:fail("todo"),
     ok.
 
 t_cache_holes_3(_Config) ->

@@ -28,7 +28,8 @@
 
     %% introduced in v2
     update_iterator/5,
-    add_generation/2
+    add_generation/2,
+    last_seen_key/4
 ]).
 
 %% behavior callbacks:
@@ -115,6 +116,18 @@ update_iterator(Node, DB, Shard, OldIter, DSKey) ->
     [{ok, ok} | {error, _}].
 add_generation(Node, DB) ->
     erpc:multicall(Node, emqx_ds_replication_layer, do_add_generation_v2, [DB]).
+
+-spec last_seen_key(
+    node(),
+    emqx_ds:db(),
+    emqx_ds_replication_layer:shard_id(),
+    emqx_ds_storage_layer:iterator()
+) ->
+    emqx_ds:message_key() | undefined.
+last_seen_key(Node, DB, Shard, Iter) ->
+    erpc:call(Node, emqx_ds_replication_layer, do_last_seen_key_v2, [
+        DB, Shard, Iter
+    ]).
 
 %%================================================================================
 %% behavior callbacks

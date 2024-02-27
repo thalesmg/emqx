@@ -176,6 +176,7 @@
 -export([password_converter/2, bin_str_converter/2]).
 -export([authz_fields/0]).
 -export([sc/2, map/2]).
+-export([connect_timeout/0, connect_timeout_sc/0, connect_timeout_sc/1]).
 
 -elvis([{elvis_style, god_modules, disable}]).
 
@@ -2626,6 +2627,31 @@ map(Name, Type) -> hoconsc:map(Name, Type).
 ref(StructName) -> hoconsc:ref(?MODULE, StructName).
 
 ref(Module, StructName) -> hoconsc:ref(Module, StructName).
+
+connect_timeout() ->
+    typerefl:alias("connect_timeout", timeout_duration_ms()).
+
+connect_timeout_sc() ->
+    connect_timeout_sc(_Overrides = #{}).
+
+connect_timeout_sc(Overrides) ->
+    sc(
+        connect_timeout(),
+        maps:merge(
+            #{
+                validator =>
+                    fun(X) ->
+                        case 1 =< X andalso X =< timer:minutes(5) of
+                            true ->
+                                ok;
+                            false ->
+                                {error, "timeout outside allowed range [1ms, 5m]"}
+                        end
+                    end
+            },
+            Overrides
+        )
+    ).
 
 mk_duration(Desc, OverrideMeta) ->
     DefaultMeta = #{

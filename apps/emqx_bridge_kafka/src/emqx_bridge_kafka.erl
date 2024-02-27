@@ -617,7 +617,7 @@ kafka_connector_config_fields() ->
                 }
             )},
         {connect_timeout,
-            mk(emqx_schema:timeout_duration_ms(), #{
+            emqx_schema:connect_timeout_sc(#{
                 default => <<"5s">>,
                 desc => ?DESC(connect_timeout)
             })},

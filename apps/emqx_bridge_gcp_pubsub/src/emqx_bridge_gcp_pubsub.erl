@@ -57,13 +57,10 @@ fields("config_consumer") ->
 fields(connector_config) ->
     [
         {connect_timeout,
-            sc(
-                emqx_schema:timeout_duration_ms(),
-                #{
-                    default => <<"15s">>,
-                    desc => ?DESC("connect_timeout")
-                }
-            )},
+            emqx_schema:connect_timeout_sc(#{
+                default => <<"15s">>,
+                desc => ?DESC("connect_timeout")
+            })},
         {pool_size,
             sc(
                 pos_integer(),

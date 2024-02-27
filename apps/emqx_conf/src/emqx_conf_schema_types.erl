@@ -199,6 +199,20 @@ readable("timeout_duration_ms()") ->
         dashboard => #{type => duration},
         docgen => #{type => "Duration", example => <<"32s">>, desc => ?DESC(duration)}
     };
+readable("connect_timeout()") ->
+    #{
+        swagger => #{
+            type => string, example => <<"32s">>, minimum => <<"1ms">>, maximum => <<"5m">>
+        },
+        dashboard => #{type => duration, minimum => <<"1ms">>, maximum => <<"5m">>},
+        docgen => #{
+            type => "Duration",
+            minimum => <<"1ms">>,
+            maximum => <<"5m">>,
+            example => <<"32s">>,
+            desc => ?DESC(duration)
+        }
+    };
 readable("percent()") ->
     #{
         swagger => #{type => string, example => <<"12%">>},

@@ -68,8 +68,7 @@ roots() ->
 fields(config) ->
     [
         {connect_timeout,
-            sc(
-                emqx_schema:timeout_duration_ms(),
+            emqx_schema:connect_timeout_sc(
                 #{
                     default => <<"15s">>,
                     desc => ?DESC("connect_timeout")

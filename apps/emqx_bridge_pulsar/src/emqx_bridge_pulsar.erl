@@ -61,13 +61,10 @@ fields(config) ->
                 }
             )},
         {connect_timeout,
-            mk(
-                emqx_schema:timeout_duration_ms(),
-                #{
-                    default => <<"5s">>,
-                    desc => ?DESC("connect_timeout")
-                }
-            )}
+            emqx_schema:connect_timeout_sc(#{
+                default => <<"5s">>,
+                desc => ?DESC("connect_timeout")
+            })}
     ] ++ emqx_connector_schema_lib:ssl_fields();
 fields(producer_opts) ->
     [

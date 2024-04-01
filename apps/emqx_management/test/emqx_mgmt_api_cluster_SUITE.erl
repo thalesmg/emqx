@@ -300,24 +300,21 @@ cluster(Config) ->
     NodeSpec = #{apps => ?APPS},
     Nodes = emqx_cth_cluster:start(
         [
-            {data_backup_core1, NodeSpec#{role => core}},
-            {data_backup_core2, NodeSpec#{role => core}},
-            {data_backup_replicant, NodeSpec#{role => replicant}}
+            {api_cluster_data_backup_core1, NodeSpec#{role => core}},
+            {api_cluster_data_backup_core2, NodeSpec#{role => core}},
+            {api_cluster_data_backup_replicant, NodeSpec#{role => replicant}}
         ],
-        #{work_dir => work_dir(Config)}
+        #{work_dir => emqx_cth_suite:work_dir(Config)}
     ),
     Nodes.
 
 setup(Config) ->
-    WorkDir = filename:join(work_dir(Config), local),
+    WorkDir = emqx_cth_suite:work_dir(Config),
     Started = emqx_cth_suite:start(?APPS, #{work_dir => WorkDir}),
     [{suite_apps, Started} | Config].
 
 cleanup(Config) ->
     emqx_cth_suite:stop(?config(suite_apps, Config)).
-
-work_dir(Config) ->
-    filename:join(?config(priv_dir, Config), ?config(tc_name, Config)).
 
 waiting_the_async_invitation_succeed(Node, TargetNode) ->
     waiting_the_async_invitation_succeed(Node, TargetNode, 100).

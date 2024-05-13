@@ -35,6 +35,9 @@
 %% `emqx_config_handler' API
 -export([pre_config_update/3, post_config_update/5]).
 
+%% `emqx_config_backup' API
+-export([import_config/1]).
+
 %% Internal exports
 -export([parse_sql_check/1]).
 
@@ -49,6 +52,7 @@
 
 -define(TRACE_TAG, "MESSAGE_VALIDATION").
 -define(CONF_ROOT, message_validation).
+-define(CONF_ROOT_BIN, <<"message_validation">>).
 -define(VALIDATIONS_CONF_PATH, [?CONF_ROOT, validations]).
 
 -type validation_name() :: binary().
@@ -198,6 +202,15 @@ post_config_update(?VALIDATIONS_CONF_PATH, {delete, Name}, _New, Old, _AppEnvs) 
 post_config_update(?VALIDATIONS_CONF_PATH, {reorder, _Order}, New, _Old, _AppEnvs) ->
     ok = emqx_message_validation_registry:reindex_positions(New),
     ok.
+
+%%------------------------------------------------------------------------------
+%% `emqx_config_backup' API
+%%------------------------------------------------------------------------------
+
+import_config(#{?CONF_ROOT_BIN := Config}) ->
+    todo;
+import_config(_RawConf) ->
+    {ok, #{root_key => ?CONF_ROOT, changed => []}}.
 
 %%------------------------------------------------------------------------------
 %% Internal exports

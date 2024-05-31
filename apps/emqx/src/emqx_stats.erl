@@ -269,14 +269,14 @@ handle_cast({setstat, Stat, MaxStat, Val}, State) ->
             ets:insert(?TAB, {MaxStat, Val})
     end,
     safe_update_element(Stat, Val),
-    ?tp(
-        emqx_stats_setstat,
-        #{
-            count_stat => Stat,
-            max_stat => MaxStat,
-            value => Val
-        }
-    ),
+    %% ?tp(
+    %%     emqx_stats_setstat,
+    %%     #{
+    %%         count_stat => Stat,
+    %%         max_stat => MaxStat,
+    %%         value => Val
+    %%     }
+    %% ),
     {noreply, State};
 handle_cast(
     {update_interval, Update = #update{name = Name}},

@@ -331,14 +331,19 @@ remove(ConfRootKey, BridgeType, BridgeName) ->
         bridge_type => BridgeType,
         bridge_name => BridgeName
     }),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     case
         emqx_conf:remove(
             [ConfRootKey, BridgeType, BridgeName],
             #{override_to => cluster}
         )
     of
-        {ok, _} -> ok;
-        {error, Reason} -> {error, Reason}
+        {ok, _} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
+            ok;
+        {error, Reason} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
+            {error, Reason}
     end.
 
 -spec check_deps_and_remove(bridge_v2_type(), bridge_v2_name(), boolean()) -> ok | {error, any()}.
@@ -499,6 +504,7 @@ uninstall_bridge_v2(
     _BridgeName,
     #{enable := false}
 ) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     %% Already not installed
     ok;
 uninstall_bridge_v2(
@@ -507,19 +513,27 @@ uninstall_bridge_v2(
     BridgeName,
     #{connector := ConnectorName} = Config
 ) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     BridgeV2Id = id_with_root_name(ConfRootKey, BridgeV2Type, BridgeName, ConnectorName),
     CreationOpts = emqx_resource:fetch_creation_opts(Config),
     ok = emqx_resource_buffer_worker_sup:stop_workers(BridgeV2Id, CreationOpts),
     ok = emqx_resource:clear_metrics(BridgeV2Id),
     case referenced_connectors_exist(BridgeV2Type, ConnectorName, BridgeName) of
         {error, _} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             ok;
         ok ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             %% uninstall from connector
             ConnectorId = emqx_connector_resource:resource_id(
                 connector_type(BridgeV2Type), ConnectorName
             ),
-            emqx_resource_manager:remove_channel(ConnectorId, BridgeV2Id)
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
+            ?tp_span(
+               "bridge_v2_remove_channel",
+               #{v2_type => BridgeV2Type, name => BridgeName},
+               emqx_resource_manager:remove_channel(ConnectorId, BridgeV2Id)
+              )
     end.
 
 combine_connector_and_bridge_v2_config(
@@ -1125,13 +1139,17 @@ post_config_update([ConfRootKey], _Req, NewConf, OldConf, _AppEnv) when
 post_config_update([ConfRootKey, Type, Name], '$remove', _, _OldConf, _AppEnvs) when
     ConfRootKey =:= ?ROOT_KEY_ACTIONS; ConfRootKey =:= ?ROOT_KEY_SOURCES
 ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     AllBridges = emqx:get_config([ConfRootKey]),
     case emqx_utils_maps:deep_get([Type, Name], AllBridges, undefined) of
         undefined ->
             ok;
         Action ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             ok = uninstall_bridge_v2(ConfRootKey, Type, Name, Action),
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             Bridges = emqx_utils_maps:deep_remove([Type, Name], AllBridges),
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             reload_message_publish_hook(Bridges)
     end,
     ?tp(bridge_post_config_update_done, #{}),

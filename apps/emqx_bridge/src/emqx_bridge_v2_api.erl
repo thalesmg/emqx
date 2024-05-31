@@ -828,6 +828,7 @@ handle_delete(ConfRootKey, Id, QueryStringOpts) ->
                         true -> true;
                         _ -> false
                     end,
+                ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
                 case
                     emqx_bridge_v2:check_deps_and_remove(
                         ConfRootKey, BridgeType, BridgeName, AlsoDeleteActions
@@ -846,8 +847,10 @@ handle_delete(ConfRootKey, Id, QueryStringOpts) ->
                         Msg = Msg0#{rules => RuleIds},
                         {400, Msg};
                     {error, timeout} ->
+                        ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
                         ?SERVICE_UNAVAILABLE(<<"request timeout">>);
                     {error, Reason} ->
+                        ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
                         ?INTERNAL_ERROR(Reason)
                 end;
             {error, not_found} ->

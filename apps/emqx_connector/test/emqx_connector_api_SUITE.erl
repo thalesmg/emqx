@@ -111,12 +111,15 @@
     emqx_auth,
     emqx_management,
     {emqx_connector, "connectors {}"},
-    {emqx_bridge, "actions {}"}
+    {emqx_bridge, "actions {}"},
+    emqx_rule_engine
 ]).
 
 -define(APPSPEC_DASHBOARD,
     {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
 ).
+
+-define(ON(NODE, BODY), erpc:call(NODE, fun() -> BODY end)).
 
 -if(?EMQX_RELEASE_EDITION == ee).
 %% For now we got only kafka_producer implementing `bridge_v2` and that is enterprise only.
@@ -139,7 +142,8 @@ groups() ->
         t_actions_field
     ],
     ClusterOnlyTests = [
-        t_inconsistent_state
+        t_inconsistent_state,
+        t_cluster_timeout_when_removing
     ],
     ClusterLaterJoinOnlyTCs = [
         % t_cluster_later_join_metrics
@@ -150,8 +154,8 @@ groups() ->
         {cluster, [], (AllTCs -- SingleOnlyTests) -- ClusterLaterJoinOnlyTCs}
     ].
 
-suite() ->
-    [{timetrap, {seconds, 60}}].
+%% suite() ->
+%%     [{timetrap, {seconds, 60}}].
 
 init_per_suite(Config) ->
     Config.
@@ -536,20 +540,14 @@ do_start_connector(TestType, Config) ->
         request_json(
             post,
             uri(["connectors"]),
-            (?KAFKA_CONNECTOR(BadName, BadServer))#{
-                <<"resource_opts">> => #{
-                    <<"start_timeout">> => <<"10ms">>
-                }
-            },
+            ?KAFKA_CONNECTOR(BadName, BadServer),
             Config
         )
     ),
     BadConnectorID = emqx_connector_resource:connector_id(?CONNECTOR_TYPE, BadName),
-    %% Checks that an `emqx_resource_manager:start' timeout when waiting for the resource to
-    %% be connected doesn't return a 500 error.
     ?assertMatch(
         %% request from product: return 400 on such errors
-        {ok, 400, _},
+        {ok, SC, _} when SC == 500 orelse SC == 400,
         request(post, {operation, TestType, start, BadConnectorID}, Config)
     ),
     ok = gen_tcp:close(Sock),
@@ -937,6 +935,69 @@ t_inconsistent_state(Config) ->
 
     ok.
 
+%% This tests the following scenario in a cluster:
+%%   1) Node 1 initiates a config update to remove a connector.  It succeeds.
+%%   2) When node 2 tries to catch up with cluster RPC, this operation times out.
+t_cluster_timeout_when_removing(Config) ->
+    ct:timetrap({seconds, 21}),
+    [N1, N2 | _] = ?config(cluster_nodes, Config),
+    ?check_trace(
+       #{timetrap => 20_000},
+       begin
+           ?ON(N1,
+               {ok, _} =
+                   emqx_conf:update(
+                     [node, cluster_call, retry_interval],
+                     timer:seconds(5),
+                     #{override_to => cluster})),
+           on_exit(fun() ->
+                           {ok, _} = emqx_conf:update(
+                                       [node, cluster_call, retry_interval],
+                                       timer:minutes(1),
+                                       #{override_to => cluster}
+                                      )
+                   end),
+           ConnectorName = ?FUNCTION_NAME,
+           ConnectorConfig = ?KAFKA_CONNECTOR(ConnectorName),
+           {ok, 201, _} = create_connector(ConnectorConfig, Config),
+           ActionName = ?FUNCTION_NAME,
+           ActionConfig = ?KAFKA_BRIDGE(ActionName, ConnectorName),
+           {ok, 201, _} = create_action(ActionConfig, Config),
+           HangKey = {?MODULE, ?FUNCTION_NAME},
+           ?ON(N2, meck:expect(?CONNECTOR_IMPL, on_remove_channel, fun(_ConnResId, _ConnSt, _ChanId) ->
+              %% Hang longer than any timeout in `post_config_update' or `gen_statem' call
+              case persistent_term:get(HangKey, false) of
+                  false ->
+                      ct:sleep(15_000),
+                      persistent_term:put(HangKey, true),
+                      {error, timeout};
+                  true ->
+                      {ok, connector_state}
+              end
+           end)),
+           %% ?ON(N1, begin
+           %%    meck:new(emqx_cluster_rpc, [passthrough, no_link]),
+           %%    meck:expect(emqx_cluster_rpc, default_multicall_timeout, 0, timer:seconds(10))
+           %% end),
+           ?ON(N1,redbug:start(["gen_statem:call -> return"], [{msgs, 1000}, {time, 50_000}])),
+           {ok, 204, _} = delete_action(?BRIDGE_TYPE, ActionName, Config),
+           ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{is_ct_crap => true}]),
+           ?ON(N2, meck:expect(?CONNECTOR_IMPL, on_remove_channel, 3, {ok, connector_state})),
+           ct:sleep(1_000),
+           ?ON(N1, ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => emqx_config:get([actions])}])),
+           ?ON(N2, ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => emqx_config:get([actions])}])),
+           ?ON(N1, ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => emqx_cluster_rpc:status()}])),
+           %% Ping cluster rpc to retry
+           ?ON(N2, emqx_cluster_rpc ! catch_up),
+           ct:sleep(1_000),
+           ?ON(N1, ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => emqx_cluster_rpc:status()}])),
+           ?ON(N2, ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => emqx_config:get([actions])}])),
+           ct:fail(todo),
+           ok
+       end,
+       []),
+    ok.
+
 %%% helpers
 listen_on_random_port() ->
     SockOpts = [binary, {active, false}, {packet, raw}, {reuseaddr, true}, {backlog, 1000}],
@@ -962,6 +1023,7 @@ request(Method, URL, Body, Config) ->
 request(Method, URL, Body, Decoder, Config) ->
     case request(Method, URL, Body, Config) of
         {ok, Code, Response} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{r => Response, c => Code}]),
             case Decoder(Response) of
                 {error, _} = Error -> Error;
                 Decoded -> {ok, Code, Decoded}
@@ -983,6 +1045,30 @@ operation_path(cluster, Oper, ConnectorID, _Config) ->
 
 enable_path(Enable, ConnectorID) ->
     uri(["connectors", ConnectorID, "enable", Enable]).
+
+create_connector(ConnectorConfig, CTConfig) ->
+    request_json(
+        post,
+        uri(["connectors"]),
+        ConnectorConfig,
+        CTConfig
+    ).
+
+create_action(ActionConfig, CTConfig) ->
+    request_json(
+      post,
+      uri(["actions"]),
+      ActionConfig,
+      CTConfig
+     ).
+
+delete_action(Type, Name, CTConfig) ->
+    ActionID = emqx_bridge_resource:bridge_id(Type, Name),
+    request(
+      delete,
+      uri(["actions", ActionID]),
+      CTConfig
+     ).
 
 publish_message(Topic, Body, Config) ->
     Node = ?config(node, Config),

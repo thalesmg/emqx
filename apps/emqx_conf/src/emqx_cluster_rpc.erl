@@ -63,6 +63,9 @@
 
 -export([get_tables_status/0]).
 
+%% Internal export only for testing / mocking
+-export([default_multicall_timeout/0]).
+
 -export_type([tnx_id/0, succeed_num/0]).
 
 -include_lib("emqx/include/logger.hrl").
@@ -146,7 +149,7 @@ start_link(Node, Name, RetryMs) ->
 %% but the initial local apply result is returned.
 -spec multicall(module(), atom(), list()) -> term().
 multicall(M, F, A) ->
-    multicall(M, F, A, all, timer:minutes(2)).
+    multicall(M, F, A, all, ?MODULE:default_multicall_timeout()).
 
 -spec multicall(module(), atom(), list(), succeed_num(), timeout()) -> term().
 multicall(M, F, A, RequiredSyncs, Timeout) when RequiredSyncs =:= all orelse RequiredSyncs >= 1 ->
@@ -165,6 +168,10 @@ multicall(M, F, A, RequiredSyncs, Timeout) when RequiredSyncs =:= all orelse Req
             }),
             Res
     end.
+
+%% Exposed as a function for testing / mocking.
+default_multicall_timeout() ->
+    timer:minutes(2).
 
 %% Return {ok, TnxId, MFARes} the first MFA result when all MFA run ok.
 %% return {init_failure, Error} when the initial MFA result is no ok or {ok, term()}.

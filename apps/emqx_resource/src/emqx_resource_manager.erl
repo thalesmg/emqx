@@ -1534,6 +1534,7 @@ do_wait_for_ready(ResId, Retry) ->
     end.
 
 safe_call(ResId, Message, Timeout) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{t => Timeout, msg => Message}]),
     try
         gen_statem:call(?REF(ResId), Message, {clean_timeout, Timeout})
     catch
@@ -1542,6 +1543,7 @@ safe_call(ResId, Message, Timeout) ->
         exit:{R, _} when R == noproc; R == normal; R == shutdown ->
             {error, not_found};
         exit:{timeout, _} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             {error, timeout}
     end.
 

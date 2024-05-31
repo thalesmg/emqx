@@ -226,8 +226,12 @@ on_remove_channel(
     } = OldState,
     ChannelId
 ) ->
+    ?tp(aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, #{}),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     %% Close prepared statements
     ok = close_prepared_statement(ChannelId, OldState),
+    ?tp(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, #{}),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     NewInstalledChannels = maps:remove(ChannelId, InstalledChannels),
     %% Update state
     NewState = OldState#{installed_channels => NewInstalledChannels},

@@ -19,6 +19,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -define(BRIDGE_TYPE, pgsql).
 -define(BRIDGE_TYPE_BIN, <<"pgsql">>).
@@ -36,6 +37,9 @@ all() ->
     emqx_common_test_helpers:all(?MODULE).
 
 init_per_suite(Config) ->
+    ProxyHost = os:getenv("PROXY_HOST", "toxiproxy"),
+    ProxyPort = list_to_integer(os:getenv("PROXY_PORT", "8474")),
+    emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
     PostgresHost = os:getenv("PGSQL_TCP_HOST", "toxiproxy"),
     PostgresPort = list_to_integer(os:getenv("PGSQL_TCP_PORT", "5432")),
     case emqx_common_test_helpers:is_tcp_server_available(PostgresHost, PostgresPort) of
@@ -55,6 +59,9 @@ init_per_suite(Config) ->
             ),
             {ok, Api} = emqx_common_test_http:create_default_app(),
             NConfig = [
+                {proxy_name, "pgsql_tcp"},
+                    {proxy_host, ProxyHost},
+                    {proxy_port, ProxyPort},
                 {apps, Apps},
                 {api, Api},
                 {pgsql_host, PostgresHost},
@@ -84,6 +91,7 @@ init_per_testcase(TestCase, Config) ->
     common_init_per_testcase(TestCase, Config).
 
 common_init_per_testcase(TestCase, Config) ->
+    emqx_common_test_helpers:reset_proxy(?config(proxy_host, Config), ?config(proxy_port, Config)),
     ct:timetrap(timer:seconds(60)),
     emqx_bridge_v2_testlib:delete_all_bridges_and_connectors(),
     emqx_config:delete_override_conf_files(),
@@ -117,6 +125,8 @@ end_per_testcase(_Testcase, Config) ->
         true ->
             ok;
         false ->
+            emqx_common_test_helpers:reset_proxy(?config(proxy_host, Config), ?config(proxy_port, Config)),
+
             emqx_bridge_pgsql_SUITE:connect_and_clear_table(Config),
             emqx_bridge_v2_testlib:delete_all_bridges_and_connectors(),
             emqx_common_test_helpers:call_janitor(60_000),
@@ -231,4 +241,62 @@ t_sync_query(Config) ->
 
 t_start_action_or_source_with_disabled_connector(Config) ->
     ok = emqx_bridge_v2_testlib:t_start_action_or_source_with_disabled_connector(Config),
+    ok.
+
+-define(ON(NODE, BODY), erpc:call(NODE, fun() -> BODY end)).
+t_cluster_timeout_when_removing(Config) ->
+    ProxyName = ?config(proxy_name, Config),
+    ProxyHost = ?config(proxy_host, Config),
+    ProxyPort = ?config(proxy_port, Config),
+    ActionName = ?config(bridge_name, Config),
+    Apps = [
+                    emqx,
+                    emqx_conf,
+                    emqx_connector,
+                    emqx_bridge,
+                    emqx_bridge_pgsql,
+                    emqx_rule_engine,
+                    emqx_management
+                ],
+    [N1, N2] = emqx_cth_cluster:start(
+        [
+            {postgres_SUITE_1, #{role => core, apps => Apps}},
+            {postgres_SUITE_2, #{role => core, apps => Apps}}
+        ],
+        #{work_dir => emqx_cth_suite:work_dir(?FUNCTION_NAME, Config)}
+    ),
+    ?check_trace(
+       #{timetrap => 20_000},
+       begin
+           ?ON(N1, {ok, _} = emqx_bridge_v2_testlib:create_bridge(Config)),
+           ?ON(N1, {ok, _} = emqx_conf:update(
+                     [node, cluster_call, retry_interval],
+                     timer:seconds(5),
+                     #{override_to => cluster})),
+           ?force_ordering(
+              #{?snk_kind := "bridge_v2_remove_channel", ?snk_meta := #{node := N1}, ?snk_span := {complete, _}},
+              #{?snk_kind := start_timeout, ?snk_span := start}
+             ),
+           ?force_ordering(
+              #{?snk_kind := start_timeout, ?snk_span := {complete, _}},
+              #{?snk_kind := "bridge_v2_remove_channel", ?snk_meta := #{node := N}, ?snk_span := start} when N =:= N2
+             ),
+           spawn_link(fun() ->
+              ?tp_span(
+                 start_timeout,
+                 #{},
+                 emqx_common_test_helpers:enable_failure(timeout, ProxyName, ProxyHost, ProxyPort)
+                )
+           end),
+           ?ON(N1, ok = emqx_bridge_v2:remove(?BRIDGE_TYPE, ActionName)),
+           ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => ?ON(N1, emqx_config:get([actions]))}]),
+           ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => ?ON(N2, emqx_config:get([actions]))}]),
+           emqx_common_test_helpers:heal_failure(timeout, ProxyName, ProxyHost, ProxyPort),
+           %% ?ON(N2, emqx_cluster_rpc ! catch_up),
+           ct:sleep(3_000),
+           ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => ?ON(N1, emqx_config:get([actions]))}]),
+           ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => ?ON(N2, emqx_config:get([actions]))}]),
+           ct:fail(todo),
+           ok
+       end,[]),
     ok.

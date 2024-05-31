@@ -136,8 +136,8 @@ do_request_api(Method, Request, Opts) ->
     HttpcReqOpts = maps:get(httpc_req_opts, Opts, []),
     ct:pal("~p: ~p~nOpts: ~p", [Method, Request, Opts]),
     case httpc:request(Method, Request, [], HttpcReqOpts) of
-        {error, socket_closed_remotely} ->
-            {error, socket_closed_remotely};
+        {error, Reason} ->
+            {error, Reason};
         {ok, {{_, Code, _}, _Headers, Body}} when CompatibleMode ->
             {ok, Code, Body};
         {ok, {{"HTTP/1.1", Code, _} = Reason, Headers, Body}} when

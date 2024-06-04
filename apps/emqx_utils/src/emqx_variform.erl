@@ -313,7 +313,7 @@ assert_module_allowed(Mod) ->
             ok;
         false ->
             throw(#{
-                reason => unallowed_veriform_module,
+                reason => unallowed_variform_module,
                 module => Mod
             })
     end.

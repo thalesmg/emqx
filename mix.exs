@@ -435,8 +435,6 @@ defmodule EMQXUmbrella.MixProject do
           {:standard, :pkg, :enterprise}
       end
 
-    normalize_env!()
-
     test? = to_string(mix_env) =~ ~r/-test$/ || test_env?()
 
     normalize_env!(test?)
@@ -916,7 +914,7 @@ defmodule EMQXUmbrella.MixProject do
     to_string(8 * size)
   end
 
-  defp normalize_env!() do
+  defp normalize_env!(test_env?) do
     env =
       case Mix.env() do
         :dev ->
@@ -925,6 +923,10 @@ defmodule EMQXUmbrella.MixProject do
         env ->
           env
       end
+
+    if test_env? do
+      ensure_test_mix_env!()
+    end
 
     Mix.env(env)
   end
@@ -974,7 +976,7 @@ defmodule EMQXUmbrella.MixProject do
     IO.inspect(args)
     Mix.shell().info("testing")
 
-    ensure_tet_mix_env!()
+    ensure_test_mix_env!()
     set_test_env!(true)
 
     Code.require_file("lib/mix/tasks/emqx.ct.ex")

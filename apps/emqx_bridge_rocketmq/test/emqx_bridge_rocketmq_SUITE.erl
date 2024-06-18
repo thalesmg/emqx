@@ -63,6 +63,8 @@ end_per_group(Group, Config) when Group =:= with_batch; Group =:= without_batch 
     ProxyHost = ?config(proxy_host, Config),
     ProxyPort = ?config(proxy_port, Config),
     emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
+    Apps = ?config(apps, Config),
+    emqx_cth_suite:stop(Apps),
     ok;
 end_per_group(_Group, _Config) ->
     ok.
@@ -71,8 +73,6 @@ init_per_suite(Config) ->
     Config.
 
 end_per_suite(_Config) ->
-    emqx_mgmt_api_test_util:end_suite(),
-    ok = emqx_common_test_helpers:stop_apps([emqx_bridge, emqx_conf]),
     ok.
 
 init_per_testcase(_Testcase, Config) ->
@@ -109,12 +109,19 @@ common_init(ConfigT) ->
             ProxyHost = os:getenv("PROXY_HOST", "toxiproxy"),
             ProxyPort = list_to_integer(os:getenv("PROXY_PORT", "8474")),
             emqx_common_test_helpers:reset_proxy(ProxyHost, ProxyPort),
-            % Ensure enterprise bridge module is loaded
-            ok = emqx_common_test_helpers:start_apps([
-                emqx_conf, emqx_resource, emqx_bridge, rocketmq
-            ]),
-            _ = emqx_bridge_enterprise:module_info(),
-            emqx_mgmt_api_test_util:init_suite(),
+            Apps = emqx_cth_suite:start(
+                [
+                    emqx,
+                    emqx_conf,
+                    emqx_connector,
+                    emqx_bridge_rocketmq,
+                    emqx_bridge,
+                    emqx_rule_engine,
+                    emqx_management,
+                    emqx_mgmt_api_test_util:emqx_dashboard()
+                ],
+                #{work_dir => emqx_cth_suite:work_dir(Config0)}
+            ),
             {Name, RocketMQConf} = rocketmq_config(BridgeType, Config0),
             RocketMQSSLConf = RocketMQConf#{
                 <<"servers">> => <<"rocketmq_namesrv_ssl:9876">>,
@@ -125,6 +132,7 @@ common_init(ConfigT) ->
             },
             Config =
                 [
+                    {apps, Apps},
                     {rocketmq_config, RocketMQConf},
                     {rocketmq_config_ssl, RocketMQSSLConf},
                     {rocketmq_bridge_type, BridgeType},

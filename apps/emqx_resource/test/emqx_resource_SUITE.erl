@@ -33,10 +33,35 @@
 -import(emqx_common_test_helpers, [on_exit/1]).
 
 all() ->
-    emqx_common_test_helpers:all(?MODULE).
+    TCs = emqx_common_test_helpers:all(?MODULE),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{tcs => TCs}]),
+    io:format(user,"\n\n~p>>>>>>>>>\n  ~p\n\n",[{node(),?MODULE,?LINE},#{}]),
+    [{testcase, t_deleteme, [{flaky, 10}]}].
+    %% TCs.
+    %% [{group, deleteme}].
+    %% [{testcase, deleteme, [{flaky, 10}]}].
+
+flaky_tests() ->
+    #{ t_deleteme => 7
+     }.
 
 groups() ->
+    %% [{deleteme, [], [{testcase, t_expiration_retry, [{repeat_until_fail, 100}]}]}].
+    %% [{deleteme, [], [{testcase, t_deleteme, [{flaky, 10}]}]}].
+    %% [{deleteme, [{repeat_until_any_ok, 10}], [t_deleteme]}].
     [].
+
+t_deleteme(_Config) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{c => _Config}]),
+    K = {?MODULE, ?FUNCTION_NAME},
+    N = persistent_term:get(K, 0),
+    case N > 5 of
+        true ->
+            ok;
+        false ->
+            persistent_term:put(K, N + 1),
+            error(boom)
+    end.
 
 init_per_testcase(_, Config) ->
     ct:timetrap({seconds, 30}),
@@ -45,12 +70,26 @@ init_per_testcase(_, Config) ->
     Config.
 
 end_per_testcase(_, _Config) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{c => _Config}]),
     snabbkaffe:stop(),
     _ = emqx_resource:remove_local(?ID),
     emqx_common_test_helpers:call_janitor(),
     ok.
+    %% case proplists:get_value(tc_status, _Config) of
+    %%     {failed, _} ->
+    %%         {fail, keep_going};
+    %%     _ ->
+    %%         ok
+    %% end.
 
 init_per_suite(Config) ->
+    {_, _, _} = redbug:start(
+                  [ "test_server_ctrl:do_update_repeat_data -> return"
+                  , "ct_run:run_dir -> return"
+                  , "ct_run:run_prepared -> return"
+                  , "ct_run:possibly_spawn -> return"
+                  ],
+                 [{msgs, 100}]),
     code:ensure_loaded(?TEST_RESOURCE),
     Apps = emqx_cth_suite:start(
         [

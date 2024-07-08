@@ -132,7 +132,8 @@
             emqx_gateway_jt808,
             emqx_bridge_syskeeper,
             emqx_bridge_confluent,
-            emqx_auth_ext
+            emqx_auth_ext,
+            emqx_auth_psk
         ],
     %% must always be of type `load'
     ce_business_apps =>

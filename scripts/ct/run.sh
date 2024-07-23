@@ -39,7 +39,8 @@ ONLY_UP='no'
 ATTACH='no'
 STOP='no'
 IS_CI='no'
-ODBC_REQUEST='no'
+SQLSERVER_ODBC_REQUEST='no'
+SNOWFLAKE_ODBC_REQUEST='no'
 UP='up'
 while [ "$#" -gt 0 ]; do
     case $1 in
@@ -207,7 +208,7 @@ for dep in ${CT_DEPS}; do
             FILES+=( '.ci/docker-compose-file/docker-compose-cassandra.yaml' )
             ;;
         sqlserver)
-            ODBC_REQUEST='yes'
+            SQLSERVER_ODBC_REQUEST='yes'
             FILES+=( '.ci/docker-compose-file/docker-compose-sqlserver.yaml' )
             ;;
         opents)
@@ -256,6 +257,9 @@ for dep in ${CT_DEPS}; do
 	couchbase)
 	    FILES+=( '.ci/docker-compose-file/docker-compose-couchbase.yaml' )
 	    ;;
+        snowflake)
+            SNOWFLAKE_ODBC_REQUEST='yes'
+            ;;
         *)
             echo "unknown_ct_dependency $dep"
             exit 1
@@ -263,10 +267,16 @@ for dep in ${CT_DEPS}; do
     esac
 done
 
-if [ "$ODBC_REQUEST" = 'yes' ]; then
-    INSTALL_ODBC="./scripts/install-msodbc-driver.sh"
+if [ "$SQLSERVER_ODBC_REQUEST" = 'yes' ]; then
+    INSTALL_SQLSERVER_ODBC="./scripts/install-msodbc-driver.sh"
 else
-    INSTALL_ODBC="echo 'msodbc driver not requested'"
+    INSTALL_SQLSERVER_ODBC="echo 'msodbc driver not requested'"
+fi
+
+if [ "$SNOWFLAKE_ODBC_REQUEST" = 'yes' ]; then
+    INSTALL_SNOWFLAKE_ODBC="./scripts/install-snowflake-driver.sh"
+else
+    INSTALL_SNOWFLAKE_ODBC="echo 'snowflake driver not requested'"
 fi
 
 for file in "${FILES[@]}"; do
@@ -311,7 +321,8 @@ if [ "$DOCKER_USER" != "root" ]; then
            chown $DOCKER_USER /.erlang.cookie && \
            chmod 0400 /.erlang.cookie && \
            chown -R $DOCKER_USER /var/lib/secret && \
-           $INSTALL_ODBC" || true
+           $INSTALL_SQLSERVER_ODBC && \
+           $INSTALL_SNOWFLAKE_ODBC" || true
 fi
 
 if [ "$ONLY_UP" = 'yes' ]; then

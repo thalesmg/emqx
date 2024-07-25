@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -xeuo pipefail
 
 ## Specify your organization - account name as the account identifier
 SFACCOUNT=${SFACCOUNT:-myorganization-myaccount}
@@ -10,38 +10,35 @@ URL="https://sfc-repo.snowflakecomputing.com/odbc/linux/${VERSION}/${FILE}"
 SHA256="fdcf83aadaf92ec135bed0699936fa4ef2cf2d88aef5a4657a96877ae2ba232d"
 
 if [[ -f "${FILE}" && $(sha256sum "${FILE}" | cut -f1 -d' ') == "${SHA256}" ]]; then
-  echo "package already downloaded"
+  echo "snowflake package already downloaded"
 else
-  echo "downloading package"
+  echo "downloading snowflake package"
   wget -nc "$URL"
 fi
-dpkg -i "${FILE}"
-apt install -f
 
-DRIVER_PATH="/usr/lib/snowflake/odbc/lib/libSnowflake.so"
+function configure() {
+  DRIVER_PATH="/usr/lib/snowflake/odbc/lib/libSnowflake.so"
 
-sed -i -e "s#^ODBCInstLib=.*#ODBCInstLib=$DRIVER_PATH#" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
+  ODBC_INST_LIB=/usr/lib/x86_64-linux-gnu/libodbcinst.so
 
-cat >>/etc/odbcinst.init <<EOF
-[ODBC Drivers]
-SnowflakeDSIIDriver=Installed
+  sed -i -e "s#^ODBCInstLib=.*#ODBCInstLib=$ODBC_INST_LIB#" /usr/lib/snowflake/odbc/lib/simba.snowflake.ini
 
-[SnowflakeDSIIDriver]
-APILevel=1
-ConnectFunctions=YYY
-Description=Snowflake DSII
-Driver=$DRIVER_PATH
-DriverODBCVer=03.52
-SQLLevel=1
-EOF
+  sed -i -e "s#SF_ACCOUNT#${SFACCOUNT}#" /etc/odbc.ini
 
-cat >>/etc/odbc.ini <<EOF
+  cat >>/etc/odbc.ini  <<EOF
 [ODBC Data Sources]
 snowflake = SnowflakeDSIIDriver
-
-[snowflake]
-Driver      = $DRIVER_PATH
-Description =
-server      = $SFACCOUNT.snowflakecomputing.com
-role        = sysadmin
 EOF
+}
+
+if ! dpkg -l snowflake-odbc 1>/dev/null 2>/dev/null ; then
+  apt update && apt install -yyq unixodbc-dev odbcinst
+  dpkg -i "${FILE}"
+  apt install -f
+
+  configure
+
+  echo "installed and configured snowflake"
+else
+  echo "snowflake odbc already installed; not attempting to configure it"
+fi

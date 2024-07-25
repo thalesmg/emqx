@@ -313,16 +313,18 @@ fi
 
 if [ "$DOCKER_USER" != "root" ]; then
     # the user must exist inside the container for `whoami` to work
-    docker exec -i $TTY -u root:root "$ERLANG_CONTAINER" bash -c \
-          "useradd --uid $DOCKER_USER -M -d / emqx && \
-           mkdir -p /.cache /.hex /.mix && \
-           chown $DOCKER_USER /.cache /.hex /.mix && \
-           openssl rand -base64 -hex 16 > /.erlang.cookie && \
-           chown $DOCKER_USER /.erlang.cookie && \
-           chmod 0400 /.erlang.cookie && \
-           chown -R $DOCKER_USER /var/lib/secret && \
-           $INSTALL_SQLSERVER_ODBC && \
-           $INSTALL_SNOWFLAKE_ODBC" || true
+  docker exec -i $TTY -u root:root \
+         -e "SFACCOUNT=${SFACCOUNT:-myorg-myacc}" \
+         "$ERLANG_CONTAINER" bash -c \
+         "useradd --uid $DOCKER_USER -M -d / emqx || true && \
+          mkdir -p /.cache /.hex /.mix && \
+          chown $DOCKER_USER /.cache /.hex /.mix && \
+          openssl rand -base64 -hex 16 > /.erlang.cookie && \
+          chown $DOCKER_USER /.erlang.cookie && \
+          chmod 0400 /.erlang.cookie && \
+          chown -R $DOCKER_USER /var/lib/secret && \
+          $INSTALL_SQLSERVER_ODBC && \
+          $INSTALL_SNOWFLAKE_ODBC" || true
 fi
 
 if [ "$ONLY_UP" = 'yes' ]; then

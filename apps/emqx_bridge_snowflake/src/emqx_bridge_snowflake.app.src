@@ -16,6 +16,7 @@
             emqx_bridge_snowflake_connector_info
         ]}
     ]},
+    {mod, {emqx_bridge_snowflake_app, []}},
     {modules, []},
     {links, []}
 ]}.

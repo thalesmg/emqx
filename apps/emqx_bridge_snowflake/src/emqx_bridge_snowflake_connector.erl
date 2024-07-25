@@ -6,6 +6,7 @@
 -feature(maybe_expr, enable).
 
 -behaviour(emqx_resource).
+-behaviour(emqx_connector_aggreg_delivery).
 
 -include_lib("public_key/include/public_key.hrl").
 -include_lib("emqx/include/logger.hrl").
@@ -13,6 +14,7 @@
 -include_lib("emqx_resource/include/emqx_resource.hrl").
 -include_lib("emqx/include/emqx_trace.hrl").
 -include("emqx_bridge_snowflake.hrl").
+-include_lib("emqx_connector_aggregator/include/emqx_connector_aggregator.hrl").
 
 %% `emqx_resource' API
 -export([
@@ -33,6 +35,14 @@
 
 %% `ecpool_worker' API
 -export([connect/1, disconnect/1]).
+
+%% `emqx_connector_aggreg_delivery' API
+-export([
+    init_transfer_state/2,
+    process_append/2,
+    process_write/1,
+    process_complete/1
+]).
 
 %% API
 -export([
@@ -64,6 +74,32 @@
 
 -type sql() :: iolist().
 -type ad_hoc_query_opts() :: map().
+
+-type transfer_opts() :: #{
+    %% upload_options := #{
+    %%     action := binary(),
+    %%     blob := emqx_template:t(),
+    %%     container := string(),
+    %%     min_block_size := pos_integer(),
+    %%     max_block_size := pos_integer(),
+    %%     driver_state := driver_state()
+    %% }
+}.
+
+-type transfer_buffer() :: iolist().
+
+-type transfer_state() :: #{
+    %% blob := blob(),
+    %% buffer := transfer_buffer(),
+    %% buffer_size := non_neg_integer(),
+    %% container := container(),
+    %% max_block_size := pos_integer(),
+    %% min_block_size := pos_integer(),
+    %% next_block := queue:queue(iolist()),
+    %% num_blocks := non_neg_integer(),
+    %% driver_state := driver_state(),
+    %% started := boolean()
+}.
 
 %%------------------------------------------------------------------------------
 %% `emqx_resource' API
@@ -204,6 +240,186 @@ connect(Opts) ->
 disconnect(ConnectionPid) ->
     odbc:disconnect(ConnectionPid).
 
+do_stage_file(ODBCPool, Filename, Database, Schema, Stage) ->
+    SQL0 = iolist_to_binary([ <<"PUT file://">>
+                            , Filename
+                            , <<" @">>
+                                  %% TODO: escape names?
+                            , Database, <<".">>, Schema, <<".">>, Stage
+                            ]),
+    SQL = binary_to_list(SQL0),
+    Res = ecpool:pick_and_do(
+      ODBCPool,
+      fun(ConnPid) ->
+         %% TODO: check if it actually succeeded?
+         odbc:sql_query(ConnPid, SQL)
+      end,
+            no_handover),
+    case Res of
+        {updated, _} ->
+            ok;
+        {error, Reason} ->
+            ?SLOG(warning, #{ msg => "snowflake_stage_file_failed"
+                            , reason => Reason
+                            , filename => Filename
+                            , database => Database
+                            , schema => Schema
+                            , stage => Stage
+                            , pool => ODBCPool
+                            }),
+            {error, Reason}
+    end.
+
+%%------------------------------------------------------------------------------
+%% `emqx_connector_aggreg_delivery' API
+%%------------------------------------------------------------------------------
+
+-spec init_transfer_state(buffer(), transfer_opts()) ->
+    transfer_state().
+init_transfer_state(Buffer, Opts) ->
+    #{
+        action_res_id := ActionResId,
+        container := #{type := ContainerType},
+        http_client_config := HTTPClientConfig,
+        upload_options := #{
+            max_block_size := MaxBlockSize,
+            min_block_size := MinBlockSize
+        },
+        work_dir := WorkDir
+    } = Opts,
+    FilenameTemplate = emqx_template:parse(<<"${action_res_id}_${seq_no}.${container_type}">>),
+    #{
+        action_res_id => ActionResId,
+        buffer_ctx => Buffer,
+
+        seq_no => 0,
+        container_type => ContainerType,
+
+        http_pool => ActionResId,
+        http_client_config => HTTPClientConfig,
+
+        odbc_pool => ActionResId,
+        filename_template => FilenameTemplate,
+        filename => undefined,
+        fd => undefined,
+        work_dir => WorkDir,
+        written => 0,
+        staged_files => [],
+        next_file => queue:new(),
+
+        max_block_size => MaxBlockSize,
+        min_block_size => MinBlockSize
+    }.
+
+-spec process_append(iodata(), transfer_state()) ->
+    transfer_state().
+process_append(IOData, TransferState0) ->
+    #{min_block_size := MinBlockSize} = TransferState0,
+    Size = iolist_size(IOData),
+    %% Open and write to file until minimum is reached
+    TransferState1 = ensure_file(TransferState0),
+    #{written := Written} = TransferState2 = append_to_file(IOData, Size, TransferState1),
+    case Written >= MinBlockSize of
+        true ->
+            close_and_enqueue_file(TransferState2);
+        false ->
+            TransferState2
+    end.
+
+ensure_file(#{fd := undefined} = TransferState) ->
+    #{
+        action_res_id := ActionResId,
+        container_type := ContainerType,
+        filename_template := FilenameTemplate,
+        seq_no := SeqNo,
+        work_dir := WorkDir
+     } = TransferState,
+    Filename0 = emqx_template:render_strict(FilenameTemplate, #{
+                                                               action_res_id => ActionResId,
+                                                               seq_no => SeqNo,
+                                                               container_type => ContainerType
+                                                              }),
+    Filename = filename:join([WorkDir, <<"tmp">>, Filename0]),
+    {ok, FD} = file:open(Filename, [write, binary]),
+    TransferState#{
+                   filename := Filename,
+                   fd := FD
+                  };
+ensure_file(TransferState) ->
+    TransferState.
+
+append_to_file(IOData, Size, TransferState) ->
+    #{ fd := FD
+     , written := Written
+     } = TransferState,
+    %% TODO: handle errors
+    ok = file:write(FD, IOData),
+    TransferState#{written := Written + Size}.
+
+close_and_enqueue_file(TransferState0) ->
+    #{ fd := FD
+     , filename := Filename
+     , next_file := NextFile
+     , seq_no := SeqNo
+     , written := Written
+     } = TransferState0,
+    ok = file:close(FD),
+    TransferState0#{
+                    next_file := queue:in({Filename, Written}, NextFile),
+                    filename := undefined,
+                    fd := undefined,
+                    seq_no := SeqNo + 1,
+                    written := 0
+                   }.
+
+-spec process_write(transfer_state()) ->
+    {ok, transfer_state()} | {error, term()}.
+process_write(TransferState0) ->
+    #{next_file := NextFile0} = TransferState0,
+    case queue:out(NextFile0) of
+        {{value, {Filename, Size}}, NextFile} ->
+            ?tp(snowflake_will_stage_file, #{}),
+            do_process_write(Filename, Size, TransferState0#{next_file := NextFile});
+        {empty, _} ->
+            {ok, TransferState0}
+    end.
+
+do_process_write(Filename, Size, TransferState0) ->
+    #{
+      odbc_pool := ODBCPool,
+      database := Database,
+      schema := Schema,
+      stage := Stage,
+      staged_files := StagedFiles0
+     } = TransferState0,
+    case do_stage_file(ODBCPool, Filename, Database, Schema, Stage) of
+        {ok, _} ->
+            Basename = filename:basename(Filename),
+            SFPath = filename:join(Stage, Basename),
+            StagedFile = #{path => SFPath, size => Size},
+            StagedFiles = [StagedFile | StagedFiles0],
+            TransferState = TransferState0#{staged_files := StagedFiles},
+            process_write(TransferState);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+-spec process_complete(transfer_state()) ->
+    {ok, term()}.
+process_complete(TransferState0) ->
+    maybe
+        %% Flush any left-over data
+        {ok, TransferState} ?= process_write(TransferState0),
+        #{ http_pool := HTTPPool
+         , http_client_config := HTTPClientConfig
+         , staged_files := StagedFiles
+         } = TransferState,
+        case do_insert_files_request(StagedFiles, HTTPPool, HTTPClientConfig) of
+            _ ->
+                ok
+        end
+    end.
+
 %%------------------------------------------------------------------------------
 %% Internal fns
 %%------------------------------------------------------------------------------
@@ -211,6 +427,13 @@ disconnect(ConnectionPid) ->
 -spec create_action(action_resource_id(), action_config(), connector_state()) ->
           {ok, action_state()} | {error, term()}.
 create_action(ActionResId, #{parameters := #{mode := aggregated}} = ActionConfig, ConnState) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{cfg => ActionConfig}]),
+    maybe
+        {ok, ActionState0} ?= start_http_pool(ActionResId, ActionConfig, ConnState),
+        start_aggregator(ActionResId, ActionConfig, ActionState0)
+    end.
+
+start_http_pool(ActionResId, ActionConfig, ConnState) ->
     #{ server := #{host := Host, port := Port}
      } = ConnState,
     #{ parameters := #{ database := Database
@@ -251,12 +474,68 @@ create_action(ActionResId, #{parameters := #{mode := aggregated}} = ActionConfig
     ],
     case ehttpc_sup:start_pool(ActionResId, PoolOpts) of
         {ok, _} ->
-            {ok, #{ jwt_config => JWTConfig
-             , insert_files_path => InserFilesPath
-             , max_retries => MaxRetries
-             , request_ttl => RequestTTL
-             }};
+            {ok, #{http => #{ jwt_config => JWTConfig
+                            , insert_files_path => InserFilesPath
+                            , max_retries => MaxRetries
+                            , request_ttl => RequestTTL
+                            }}};
         {error, Reason} ->
+            {error, Reason}
+    end.
+
+start_aggregator(ActionResId, ActionConfig, ActionState0) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{cfg => ActionConfig}]),
+    maybe
+    #{ bridge_name := Name
+     , parameters := #{
+                       mode := aggregated = Mode,
+                       aggregation := #{
+                                        container := ContainerOpts,
+                                        max_records := MaxRecords,
+                                        time_interval := TimeInterval
+                                       },
+                       max_block_size := MaxBlockSize,
+                       min_block_size := MinBlockSize
+                      }
+     } = ActionConfig,
+    #{http := HTTPClientConfig} = ActionState0,
+    Type = ?ACTION_TYPE_BIN,
+    AggregId = {Type, Name},
+    WorkDir = work_dir(Type, Name),
+    AggregOpts = #{
+        max_records => MaxRecords,
+        time_interval => TimeInterval,
+        work_dir => WorkDir
+    },
+    TransferOpts = #{
+        action => Name,
+        action_res_id => ActionResId,
+        http_client_config => HTTPClientConfig,
+        max_block_size => MaxBlockSize,
+        min_block_size => MinBlockSize,
+        work_dir => WorkDir
+    },
+    DeliveryOpts = #{
+        callback_module => ?MODULE,
+        container => ContainerOpts,
+        upload_options => TransferOpts
+    },
+    _ = ?AGGREG_SUP:delete_child(AggregId),
+    {ok, SupPid} ?= ?AGGREG_SUP:start_child(#{
+        id => AggregId,
+        start =>
+            {emqx_connector_aggreg_upload_sup, start_link, [AggregId, AggregOpts, DeliveryOpts]},
+        type => supervisor,
+        restart => permanent
+    }),
+    {ok, ActionState0#{ mode => Mode
+                      , aggreg_id => AggregId
+                      , supervisor => SupPid
+                      , on_stop => {?AGGREG_SUP, delete_child, [AggregId]}
+                      }}
+    else
+        {error, Reason} ->
+            ehttpc_sup:stop_pool(ActionResId),
             {error, Reason}
     end.
 
@@ -264,6 +543,9 @@ create_action(ActionResId, #{parameters := #{mode := aggregated}} = ActionConfig
 destroy_action(ActionResId, _ActionState) ->
     ok = ehttpc_sup:stop_pool(ActionResId),
     ok.
+
+work_dir(Type, Name) ->
+    filename:join([emqx:data_dir(), bridge, Type, Name]).
 
 str(X) -> emqx_utils_conv:str(X).
 
@@ -316,12 +598,12 @@ fingerprint(PrivateJWK) ->
     Hash64 = base64:encode(Hash),
     <<"SHA256:", Hash64/binary>>.
 
-do_insert_files_request(Filenames, ActionResId, ActionState) ->
+do_insert_files_request(Filenames, HTTPPool, HTTPClientConfig) ->
     #{ jwt_config := JWTConfig
      , insert_files_path := InserFilesPath
      , request_ttl := RequestTTL
      , max_retries := MaxRetries
-     } = ActionState,
+     } = HTTPClientConfig,
     JWTToken = emqx_connector_jwt:ensure_jwt(JWTConfig),
     AuthnHeader = [<<"BEARER ">>, JWTToken],
     Headers = [ {<<"X-Snowflake-Authorization-Token-Type">>, <<"KEYPAIR_JWT">>}
@@ -337,7 +619,7 @@ do_insert_files_request(Filenames, ActionResId, ActionState) ->
     Body = emqx_utils_json:encode(#{files => Files}),
     Req = {InserFilesPath, Headers, Body},
     Response = ehttpc:request(
-                 ActionResId,
+                 HTTPPool,
                  post,
                  Req,
                  RequestTTL,

@@ -18,12 +18,17 @@ defmodule EMQXBridgeSnowflake.MixProject do
   end
 
   def application do
-    [extra_applications: [:odbc] ++ UMP.extra_applications()]
+    [
+      extra_applications: [:odbc] ++ UMP.extra_applications(),
+      mod: {:emqx_bridge_snowflake_app, []}
+    ]
   end
 
   def deps() do
     [
-      {:emqx_resource, in_umbrella: true}
+      {:emqx_resource, in_umbrella: true},
+      {:emqx_connector_aggregator, in_umbrella: true},
+      UMP.common_dep(:ehttpc)
     ]
   end
 end

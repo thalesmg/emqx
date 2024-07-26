@@ -73,7 +73,7 @@ fields(aggreg_parameters) ->
     , {private_key, emqx_schema_secret:mk(#{required => true, desc => ?DESC("private_key")})}
     , {database, mk(binary(), #{required => true, desc => ?DESC("database")})}
     , {schema, mk(binary(), #{required => true, desc => ?DESC("schema")})}
-    %% , {table, mk(binary(), #{required => true, desc => ?DESC("table")})}
+    , {stage, mk(binary(), #{required => true, desc => ?DESC("stage")})}
     , {pipe, mk(binary(), #{required => true, desc => ?DESC("pipe")})}
     , {pipe_user, mk(binary(), #{required => true, desc => ?DESC("pipe_user")})}
     , {connect_timeout,

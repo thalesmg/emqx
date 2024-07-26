@@ -18,6 +18,7 @@
 
 %% `emqx_resource' API
 -export([
+    resource_type/0,
     callback_mode/0,
 
     on_start/2,
@@ -29,8 +30,8 @@
     on_remove_channel/3,
     on_get_channel_status/3,
 
-    on_query/3
-    %% on_batch_query/3
+    on_query/3,
+    on_batch_query/3
 ]).
 
 %% `ecpool_worker' API
@@ -46,6 +47,7 @@
 
 %% API
 -export([
+   insert_report/2
 ]).
 
 %%------------------------------------------------------------------------------
@@ -55,55 +57,116 @@
 -define(SUCCESS(STATUS_CODE), (STATUS_CODE >= 200 andalso STATUS_CODE < 300)).
 
 %% Ad-hoc requests
--record(sql_query, {sql :: sql(), opts :: ad_hoc_query_opts()}).
+-record(insert_report, {action_res_id :: action_resource_id(), opts :: ad_hoc_query_opts()}).
 
 -type connector_config() :: #{
+  server := binary(),
+  account := account(),
+  username := binary(),
+  password := emqx_schema_secret:secret(),
+  dsn := binary(),
+  pool_size := pos_integer()
 }.
 -type connector_state() :: #{
+    account := account(),
+    server := #{host := binary(), port := emqx_schema:port_number()},
     installed_actions := #{action_resource_id() => action_state()}
 }.
 
--type action_config() :: #{
+-type action_config() :: aggregated_action_config().
+-type aggregated_action_config() :: #{
+  parameters := #{
+    mode := aggregated
+  , database := database()
+  , schema := schema()
+  , pipe := pipe()
+  , pipe_user := binary()
+  , private_key := emqx_schema_secret:secret()
+  , connect_timeout := emqx_schema:timeout_duration()
+  , pipelining := non_neg_integer()
+  , pool_size := pos_integer()
+  , max_retries := non_neg_integer()
+  }
 }.
 -type action_state() :: #{
 }.
 
--type query() :: action_query() | ad_hoc_query().
--type action_query() :: {_Tag :: channel_id(), _Data :: map()}.
--type ad_hoc_query() :: #sql_query{}.
+-type account() :: binary().
+-type database() :: binary().
+-type schema() :: binary().
+-type stage() :: binary().
+-type pipe() :: binary().
 
--type sql() :: iolist().
+-type odbc_pool() :: connector_resource_id().
+-type http_pool() :: action_resource_id().
+-type http_client_config() :: #{
+                                jwt_config := emqx_connector_jwt:jwt_config()
+                               , insert_files_path := binary()
+                               , insert_report_path := binary()
+                               , max_retries := non_neg_integer()
+                               , request_ttl := timeout()
+}.
+
+-type query() :: action_query() | insert_report_query().
+-type action_query() :: {_Tag :: channel_id(), _Data :: map()}.
+-type insert_report_query() :: #insert_report{}.
+
 -type ad_hoc_query_opts() :: map().
 
 -type transfer_opts() :: #{
-    %% upload_options := #{
-    %%     action := binary(),
-    %%     blob := emqx_template:t(),
-    %%     container := string(),
-    %%     min_block_size := pos_integer(),
-    %%     max_block_size := pos_integer(),
-    %%     driver_state := driver_state()
-    %% }
+    container := #{type := emqx_connector_aggregator:container_type()},
+    upload_options := #{
+        action_res_id := action_resource_id(),
+      database := database(),
+      schema := schema(),
+      stage := stage(),
+        odbc_pool := odbc_pool(),
+        http_pool := http_pool(),
+        http_client_config := http_client_config(),
+        min_block_size := pos_integer(),
+        max_block_size := pos_integer(),
+        work_dir := file:filename()
+    }
 }.
 
 -type transfer_buffer() :: iolist().
 
 -type transfer_state() :: #{
-    %% blob := blob(),
-    %% buffer := transfer_buffer(),
-    %% buffer_size := non_neg_integer(),
-    %% container := container(),
-    %% max_block_size := pos_integer(),
-    %% min_block_size := pos_integer(),
-    %% next_block := queue:queue(iolist()),
-    %% num_blocks := non_neg_integer(),
-    %% driver_state := driver_state(),
-    %% started := boolean()
+        action_res_id := action_resource_id(),
+
+        seq_no := non_neg_integer(),
+        container_type := emqx_connector_aggregator:container_type(),
+
+        http_pool := http_pool(),
+        http_client_config := http_client_config(),
+
+        odbc_pool := odbc_pool(),
+      database := database(),
+      schema := schema(),
+      stage := stage(),
+        filename_template := emqx_template:t(),
+        filename := emqx_maybe:t(file:filename()),
+        fd := emqx_maybe:t(file:io_device()),
+        work_dir := file:filename(),
+        written := non_neg_integer(),
+        staged_files := [staged_file()],
+        next_file := queue:queue({file:filename(), non_neg_integer()}),
+
+        max_block_size := pos_integer(),
+        min_block_size := pos_integer()
+}.
+-type staged_file() :: #{
+  path := file:filename(),
+  size := non_neg_integer()
 }.
 
 %%------------------------------------------------------------------------------
 %% `emqx_resource' API
 %%------------------------------------------------------------------------------
+
+-spec resource_type() -> atom().
+resource_type() ->
+    snowflake.
 
 -spec callback_mode() -> callback_mode().
 callback_mode() ->
@@ -149,8 +212,7 @@ on_stop(ConnResId, _ConnState) ->
 -spec on_get_status(connector_resource_id(), connector_state()) ->
     ?status_connected | ?status_disconnected.
 on_get_status(ConnResId, _ConnState) ->
-    todo,
-    ?status_connected.
+    health_check_connector(ConnResId).
 
 -spec on_add_channel(
     connector_resource_id(),
@@ -159,9 +221,9 @@ on_get_status(ConnResId, _ConnState) ->
     action_config()
 ) ->
     {ok, connector_state()}.
-on_add_channel(_ConnResId, ConnState0, ActionResId, ActionConfig) ->
+on_add_channel(ConnResId, ConnState0, ActionResId, ActionConfig) ->
     maybe
-        {ok, ActionState} ?= create_action(ActionResId, ActionConfig, ConnState0),
+        {ok, ActionState} ?= create_action(ConnResId, ActionResId, ActionConfig, ConnState0),
         ConnState = emqx_utils_maps:deep_put([installed_actions, ActionResId], ConnState0, ActionState),
         {ok, ConnState}
     end.
@@ -200,33 +262,52 @@ on_get_channel_status(
     ActionResId,
     _ConnState = #{installed_actions := InstalledActions}
 ) when is_map_key(ActionResId, InstalledActions) ->
-    todo,
-    ?status_connected;
+    ActionState = maps:get(ActionResId, InstalledActions),
+    action_status(ActionState);
 on_get_channel_status(_ConnResId, _ActionResId, _ConnState) ->
     ?status_disconnected.
 
 -spec on_query(connector_resource_id(), query(), connector_state()) ->
     {ok, _Result} | {error, _Reason}.
-on_query(ConnResId, {Tag, Data}, #{installed_actions := InstalledActions} = ConnState) when
-    is_map_key(Tag, InstalledActions)
+on_query(_ConnResId, {ActionResId, Data}, #{installed_actions := InstalledActions} = ConnState) when
+    is_map_key(ActionResId, InstalledActions)
 ->
-    {ok, todo};
+    case InstalledActions of
+        #{ActionResId := #{mode := aggregated} = ActionState} ->
+            run_aggregated_action([Data], ActionState);
+        #{ActionResId := #{mode := direct} = _ActionState} ->
+            {ok, todo}
+        end;
+on_query(_ConnResId, #insert_report{action_res_id = ActionResId, opts = Opts}, #{installed_actions := InstalledActions} = _ConnState) when
+    is_map_key(ActionResId, InstalledActions)
+->
+    #{mode := aggregated, http := HTTPClientConfig} = maps:get(ActionResId, InstalledActions),
+    do_insert_report_request(ActionResId, Opts, HTTPClientConfig);
 on_query(_ConnResId, Query, _ConnState) ->
     {error, {unrecoverable_error, {invalid_query, Query}}}.
 
-%% -spec on_batch_query(connector_resource_id(), [query()], connector_state()) ->
-%%     {ok, _Result} | {error, _Reason}.
-%% on_batch_query(_ConnResId, [{Tag, _} | Rest], #{installed_actions := InstalledActions}) when
-%%     is_map_key(Tag, InstalledActions)
-%% ->
-%%     ActionState = maps:get(Tag, InstalledActions),
-%%     todo;
-%% on_batch_query(_ConnResId, Batch, _ConnState) ->
-%%     {error, {unrecoverable_error, {bad_batch, Batch}}}.
+-spec on_batch_query(connector_resource_id(), [query()], connector_state()) ->
+    {ok, _Result} | {error, _Reason}.
+on_batch_query(_ConnResId, [{ActionResId, _} | _] = Batch0, #{installed_actions := InstalledActions}) when
+    is_map_key(ActionResId, InstalledActions)
+->
+    case InstalledActions of
+        #{ActionResId := #{mode := aggregated} = ActionState} ->
+            Batch = [Data || {_, Data} <- Batch0],
+            run_aggregated_action(Batch, ActionState);
+        #{ActionResId := #{mode := direct} = _ActionState} ->
+            {ok, todo}
+    end;
+on_batch_query(_ConnResId, Batch, _ConnState) ->
+    {error, {unrecoverable_error, {bad_batch, Batch}}}.
 
 %%------------------------------------------------------------------------------
 %% API
 %%------------------------------------------------------------------------------
+
+-spec insert_report(action_resource_id(), _Opts :: map()) -> _TODO.
+insert_report(ActionResId, Opts) ->
+    emqx_resource:simple_sync_query(ActionResId, #insert_report{action_res_id = ActionResId, opts = Opts}).
 
 %%------------------------------------------------------------------------------
 %% `ecpool_worker' API
@@ -240,6 +321,27 @@ connect(Opts) ->
 disconnect(ConnectionPid) ->
     odbc:disconnect(ConnectionPid).
 
+health_check_connector(ConnResId) ->
+    Res = emqx_resource_pool:health_check_workers(
+            ConnResId,
+            fun ?MODULE:do_health_check_connector/1),
+    case Res of
+        true ->
+            ?status_connected;
+        false ->
+            ?status_disconnected
+    end.
+
+do_health_check_connector(ConnectionPid) ->
+    case odbc:sql_query(ConnectionPid, "show schemas") of
+        {selected, _, _} ->
+            true;
+        _ ->
+            false
+    end.
+
+-spec do_stage_file(odbc_pool(), file:filename(), database(), schema(), stage()) ->
+          ok | {error, term()}.
 do_stage_file(ODBCPool, Filename, Database, Schema, Stage) ->
     SQL0 = iolist_to_binary([ <<"PUT file://">>
                             , Filename
@@ -252,23 +354,45 @@ do_stage_file(ODBCPool, Filename, Database, Schema, Stage) ->
       ODBCPool,
       fun(ConnPid) ->
          %% TODO: check if it actually succeeded?
+              'Elixir.IO':inspect(#{me => self(), odbc_pid_inside => ConnPid}, []),
          odbc:sql_query(ConnPid, SQL)
       end,
-            no_handover),
-    case Res of
-        {updated, _} ->
-            ok;
-        {error, Reason} ->
-            ?SLOG(warning, #{ msg => "snowflake_stage_file_failed"
-                            , reason => Reason
-                            , filename => Filename
-                            , database => Database
-                            , schema => Schema
-                            , stage => Stage
-                            , pool => ODBCPool
-                            }),
-            {error, Reason}
-    end.
+            %% Must be executed by the ecpool worker, which owns the ODBC connection.
+            handover),
+    Context = #{
+                   filename => Filename
+                  , database => Database
+                  , schema => Schema
+                  , stage => Stage
+                  , pool => ODBCPool
+                  },
+    handle_stage_file_result(Res, Context).
+
+handle_stage_file_result({selected, Headers0, Rows}, Context) ->
+    #{filename := Filename} = Context,
+    Headers = lists:map(fun emqx_utils_conv:bin/1, Headers0),
+    ParsedRows = lists:map(fun(R) -> row_to_map(R, Headers) end, Rows),
+    case ParsedRows of
+        [#{<<"target">> := Target, <<"status">> := <<"UPLOADED">>}] ->
+            ?SLOG(debug, Context#{ msg => "snowflake_stage_file_succeeded"
+                                 , result => ParsedRows
+                                 }),
+            ok = file:delete(Filename),
+            {ok, Target};
+        [#{<<"target">> := Target, <<"status">> := <<"SKIPPED">>}] ->
+            ?SLOG(info, Context#{ msg => "snowflake_stage_file_skipped"
+                                   , result => ParsedRows
+                                   }),
+            ok = file:delete(Filename),
+            {ok, Target};
+        _ ->
+            {error, {bad_response, ParsedRows}}
+    end;
+handle_stage_file_result({error, Reason} = Error, Context) ->
+    ?SLOG(warning, Context#{ msg => "snowflake_stage_file_failed"
+                              , reason => Reason
+                              }),
+    Error.
 
 %%------------------------------------------------------------------------------
 %% `emqx_connector_aggreg_delivery' API
@@ -276,29 +400,38 @@ do_stage_file(ODBCPool, Filename, Database, Schema, Stage) ->
 
 -spec init_transfer_state(buffer(), transfer_opts()) ->
     transfer_state().
-init_transfer_state(Buffer, Opts) ->
+init_transfer_state(_Buffer, Opts) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{
-        action_res_id := ActionResId,
         container := #{type := ContainerType},
-        http_client_config := HTTPClientConfig,
         upload_options := #{
+            action_res_id := ActionResId,
+            database := Database,
+            schema := Schema,
+            stage := Stage,
+            odbc_pool := ODBCPool,
+            http_pool := HTTPPool,
+            http_client_config := HTTPClientConfig,
             max_block_size := MaxBlockSize,
-            min_block_size := MinBlockSize
-        },
-        work_dir := WorkDir
+            min_block_size := MinBlockSize,
+            work_dir := WorkDir
+        }
     } = Opts,
     FilenameTemplate = emqx_template:parse(<<"${action_res_id}_${seq_no}.${container_type}">>),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{
         action_res_id => ActionResId,
-        buffer_ctx => Buffer,
 
         seq_no => 0,
         container_type => ContainerType,
 
-        http_pool => ActionResId,
+        http_pool => HTTPPool,
         http_client_config => HTTPClientConfig,
 
-        odbc_pool => ActionResId,
+        odbc_pool => ODBCPool,
+      database => Database,
+      schema => Schema,
+      stage => Stage,
         filename_template => FilenameTemplate,
         filename => undefined,
         fd => undefined,
@@ -314,13 +447,16 @@ init_transfer_state(Buffer, Opts) ->
 -spec process_append(iodata(), transfer_state()) ->
     transfer_state().
 process_append(IOData, TransferState0) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{min_block_size := MinBlockSize} = TransferState0,
     Size = iolist_size(IOData),
     %% Open and write to file until minimum is reached
     TransferState1 = ensure_file(TransferState0),
     #{written := Written} = TransferState2 = append_to_file(IOData, Size, TransferState1),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{ts2 => TransferState2, ts0 => TransferState0, data => IOData, contents => file:read_file(maps:get(filename, TransferState2))}]),
     case Written >= MinBlockSize of
         true ->
+            'Elixir.IO':inspect(#{}, []),
             close_and_enqueue_file(TransferState2);
         false ->
             TransferState2
@@ -340,6 +476,7 @@ ensure_file(#{fd := undefined} = TransferState) ->
                                                                container_type => ContainerType
                                                               }),
     Filename = filename:join([WorkDir, <<"tmp">>, Filename0]),
+    ok = filelib:ensure_dir(Filename),
     {ok, FD} = file:open(Filename, [write, binary]),
     TransferState#{
                    filename := Filename,
@@ -375,15 +512,20 @@ close_and_enqueue_file(TransferState0) ->
 -spec process_write(transfer_state()) ->
     {ok, transfer_state()} | {error, term()}.
 process_write(TransferState0) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{next_file := NextFile0} = TransferState0,
     case queue:out(NextFile0) of
         {{value, {Filename, Size}}, NextFile} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{f => Filename, s => Size, nf => NextFile}]),
             ?tp(snowflake_will_stage_file, #{}),
             do_process_write(Filename, Size, TransferState0#{next_file := NextFile});
         {empty, _} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             {ok, TransferState0}
     end.
 
+-spec do_process_write(file:filename(), non_neg_integer(), transfer_state()) ->
+    {ok, transfer_state()} | {error, term()}.
 do_process_write(Filename, Size, TransferState0) ->
     #{
       odbc_pool := ODBCPool,
@@ -393,30 +535,42 @@ do_process_write(Filename, Size, TransferState0) ->
       staged_files := StagedFiles0
      } = TransferState0,
     case do_stage_file(ODBCPool, Filename, Database, Schema, Stage) of
-        {ok, _} ->
-            Basename = filename:basename(Filename),
-            SFPath = filename:join(Stage, Basename),
-            StagedFile = #{path => SFPath, size => Size},
+        {ok, Target} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{t => Target}]),
+            StagedFile = #{path => Target, size => Size},
             StagedFiles = [StagedFile | StagedFiles0],
             TransferState = TransferState0#{staged_files := StagedFiles},
             process_write(TransferState);
         {error, Reason} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{r => Reason}]),
             {error, Reason}
     end.
 
 -spec process_complete(transfer_state()) ->
     {ok, term()}.
 process_complete(TransferState0) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
+    #{written := Written0} = TransferState0,
     maybe
         %% Flush any left-over data
-        {ok, TransferState} ?= process_write(TransferState0),
+        {ok, TransferState} ?=
+            case Written0 > 0 of
+                true ->
+                    TransferState1 = close_and_enqueue_file(TransferState0),
+                    process_write(TransferState1);
+                false ->
+                    {ok, TransferState0}
+            end,
+        ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{ts => TransferState}]),
         #{ http_pool := HTTPPool
          , http_client_config := HTTPClientConfig
          , staged_files := StagedFiles
          } = TransferState,
         case do_insert_files_request(StagedFiles, HTTPPool, HTTPClientConfig) of
-            _ ->
-                ok
+            _X ->
+                ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => _X}]),
+                'Elixir.IO':inspect(_X),
+                {ok, todo}
         end
     end.
 
@@ -424,13 +578,12 @@ process_complete(TransferState0) ->
 %% Internal fns
 %%------------------------------------------------------------------------------
 
--spec create_action(action_resource_id(), action_config(), connector_state()) ->
+-spec create_action(connector_resource_id(), action_resource_id(), action_config(), connector_state()) ->
           {ok, action_state()} | {error, term()}.
-create_action(ActionResId, #{parameters := #{mode := aggregated}} = ActionConfig, ConnState) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{cfg => ActionConfig}]),
+create_action(ConnResId, ActionResId, #{parameters := #{mode := aggregated}} = ActionConfig, ConnState) ->
     maybe
         {ok, ActionState0} ?= start_http_pool(ActionResId, ActionConfig, ConnState),
-        start_aggregator(ActionResId, ActionConfig, ActionState0)
+        start_aggregator(ConnResId, ActionResId, ActionConfig, ActionState0)
     end.
 
 start_http_pool(ActionResId, ActionConfig, ConnState) ->
@@ -451,13 +604,18 @@ start_http_pool(ActionResId, ActionConfig, ConnState) ->
      } = ActionConfig,
     PipePath0 = iolist_to_binary(lists:join($., [Database, Schema, Pipe])),
     PipePath = string:uppercase(PipePath0),
-    InserFilesPath = iolist_to_binary([ <<"https://">>
-                                      , Host
-                                      , <<":">>
-                                      , integer_to_binary(Port)
-                                      , <<"/v1/data/pipes/">>
-                                      , PipePath
+    PipePrefix = iolist_to_binary([ <<"https://">>
+                               , Host
+                               , <<":">>
+                               , integer_to_binary(Port)
+                               , <<"/v1/data/pipes/">>
+                               , PipePath
+                               ]),
+    InserFilesPath = iolist_to_binary([ PipePrefix
                                       , <<"/insertFiles">>
+                                      ]),
+    InserReportPath = iolist_to_binary([ PipePrefix
+                                      , <<"/insertReport">>
                                       ]),
     JWTConfig = jwt_config(ActionResId, ActionConfig, ConnState),
     TransportOpts = emqx_tls_lib:to_client_opts(#{enable => true, verify => verify_none}),
@@ -476,6 +634,7 @@ start_http_pool(ActionResId, ActionConfig, ConnState) ->
         {ok, _} ->
             {ok, #{http => #{ jwt_config => JWTConfig
                             , insert_files_path => InserFilesPath
+                            , insert_report_path => InserReportPath
                             , max_retries => MaxRetries
                             , request_ttl => RequestTTL
                             }}};
@@ -483,21 +642,24 @@ start_http_pool(ActionResId, ActionConfig, ConnState) ->
             {error, Reason}
     end.
 
-start_aggregator(ActionResId, ActionConfig, ActionState0) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{cfg => ActionConfig}]),
+start_aggregator(ConnResId, ActionResId, ActionConfig, ActionState0) ->
+    'Elixir.IO':inspect(ActionConfig, [{label, config}]),
     maybe
-    #{ bridge_name := Name
-     , parameters := #{
-                       mode := aggregated = Mode,
-                       aggregation := #{
-                                        container := ContainerOpts,
-                                        max_records := MaxRecords,
-                                        time_interval := TimeInterval
-                                       },
-                       max_block_size := MaxBlockSize,
-                       min_block_size := MinBlockSize
-                      }
-     } = ActionConfig,
+        #{ bridge_name := Name
+         , parameters := #{
+                           mode := aggregated = Mode,
+                           database := Database,
+                           schema := Schema,
+                           stage := Stage,
+                           aggregation := #{
+                                            container := ContainerOpts,
+                                            max_records := MaxRecords,
+                                            time_interval := TimeInterval
+                                           },
+                           max_block_size := MaxBlockSize,
+                           min_block_size := MinBlockSize
+                          }
+         } = ActionConfig,
     #{http := HTTPClientConfig} = ActionState0,
     Type = ?ACTION_TYPE_BIN,
     AggregId = {Type, Name},
@@ -510,6 +672,11 @@ start_aggregator(ActionResId, ActionConfig, ActionState0) ->
     TransferOpts = #{
         action => Name,
         action_res_id => ActionResId,
+        odbc_pool => ConnResId,
+      database => Database,
+      schema => Schema,
+      stage => Stage,
+        http_pool => ActionResId,
         http_client_config => HTTPClientConfig,
         max_block_size => MaxBlockSize,
         min_block_size => MinBlockSize,
@@ -535,14 +702,32 @@ start_aggregator(ActionResId, ActionConfig, ActionState0) ->
                       }}
     else
         {error, Reason} ->
-            ehttpc_sup:stop_pool(ActionResId),
+            _ = ehttpc_sup:stop_pool(ActionResId),
             {error, Reason}
     end.
 
 -spec destroy_action(action_resource_id(), action_state()) -> ok.
-destroy_action(ActionResId, _ActionState) ->
+destroy_action(ActionResId, ActionState) ->
+    case ActionState of
+        #{on_stop := {M, F, A}} ->
+            ok = apply(M, F, A);
+        _ ->
+            ok
+    end,
     ok = ehttpc_sup:stop_pool(ActionResId),
     ok.
+
+run_aggregated_action(Batch, #{aggreg_id := AggregId}) ->
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{batch => Batch}]),
+    Timestamp = erlang:system_time(second),
+    case emqx_connector_aggregator:push_records(AggregId, Timestamp, Batch) of
+        ok ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
+            ok;
+        {error, Reason} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{r => Reason}]),
+            {error, {unrecoverable_error, Reason}}
+    end.
 
 work_dir(Type, Name) ->
     filename:join([emqx:data_dir(), bridge, Type, Name]).
@@ -598,7 +783,7 @@ fingerprint(PrivateJWK) ->
     Hash64 = base64:encode(Hash),
     <<"SHA256:", Hash64/binary>>.
 
-do_insert_files_request(Filenames, HTTPPool, HTTPClientConfig) ->
+do_insert_files_request(StagedFiles, HTTPPool, HTTPClientConfig) ->
     #{ jwt_config := JWTConfig
      , insert_files_path := InserFilesPath
      , request_ttl := RequestTTL
@@ -610,13 +795,7 @@ do_insert_files_request(Filenames, HTTPPool, HTTPClientConfig) ->
               , {<<"Content-Type">>, <<"application/json">>}
               , {<<"Authorization">>, AuthnHeader}
               ],
-    Files = lists:map(
-             fun(Filename) ->
-                     %% FIXME: different compressions?
-                     #{path => iolist_to_binary([Filename, <<".gz">>])}
-             end,
-             Filenames),
-    Body = emqx_utils_json:encode(#{files => Files}),
+    Body = emqx_utils_json:encode(#{files => StagedFiles}),
     Req = {InserFilesPath, Headers, Body},
     Response = ehttpc:request(
                  HTTPPool,
@@ -625,4 +804,52 @@ do_insert_files_request(Filenames, HTTPPool, HTTPClientConfig) ->
                  RequestTTL,
                  MaxRetries
                 ),
+    'Elixir.IO':inspect(#{res => Response, req => Req}, [{label, config}]),
     Response.
+
+do_insert_report_request(HTTPPool, Opts, HTTPClientConfig) ->
+    #{ jwt_config := JWTConfig
+     , insert_report_path := InsertReportPath0
+     , request_ttl := RequestTTL
+     , max_retries := MaxRetries
+     } = HTTPClientConfig,
+    JWTToken = emqx_connector_jwt:ensure_jwt(JWTConfig),
+    AuthnHeader = [<<"BEARER ">>, JWTToken],
+    Headers = [ {<<"X-Snowflake-Authorization-Token-Type">>, <<"KEYPAIR_JWT">>}
+              , {<<"Content-Type">>, <<"application/json">>}
+              , {<<"Authorization">>, AuthnHeader}
+              ],
+    InsertReportPath = case Opts of
+                           #{begin_mark := BeginMark} when is_binary(BeginMark) ->
+                               <<InsertReportPath0/binary, "?beginMark=", BeginMark/binary>>;
+                           _ ->
+                               InsertReportPath0
+                       end,
+    Req = {InsertReportPath, Headers},
+    Response = ehttpc:request(
+                 HTTPPool,
+                 get,
+                 Req,
+                 RequestTTL,
+                 MaxRetries
+                ),
+    case Response of
+        {ok, 200, _Headers, Body0} ->
+            Body = emqx_utils_json:decode(Body0, [return_maps]),
+            {ok, Body};
+        _ ->
+            {error, Response}
+    end.
+
+row_to_map(Row0, Headers) ->
+    Row1 = tuple_to_list(Row0),
+    Row2 = lists:map(fun emqx_utils_conv:bin/1, Row1),
+    Row = lists:zip(Headers, Row2),
+    maps:from_list(Row).
+
+action_status(#{mode := aggregated} = ActionState) ->
+    #{aggreg_id := AggregId} = ActionState,
+    %% NOTE: This will effectively trigger uploads of buffers yet to be uploaded.
+    Timestamp = erlang:system_time(second),
+    ok = emqx_connector_aggregator:tick(AggregId, Timestamp),
+    ?status_connected.

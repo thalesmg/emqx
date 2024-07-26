@@ -6,7 +6,11 @@
         kernel,
         stdlib,
         odbc,
-        emqx_resource
+        gproc,
+        ecpool,
+        ehttpc,
+        emqx_resource,
+        emqx_connector_jwt,
     ]},
     {env, [
         {emqx_action_info_modules, [

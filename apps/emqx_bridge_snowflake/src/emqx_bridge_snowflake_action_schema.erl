@@ -130,8 +130,11 @@ fields(aggregation) ->
             )}
     ];
 fields(action_resource_opts) ->
-    Fields = emqx_bridge_v2_schema:action_resource_opts_fields(),
-    lists:foldl(fun proplists:delete/2, Fields, [batch_size, batch_time]).
+    %% NOTE: This action should benefit from generous batching defaults.
+    emqx_bridge_v2_schema:action_resource_opts_fields([
+        {batch_size, #{default => 100}},
+        {batch_time, #{default => <<"10ms">>}}
+    ]).
 
 desc(Name) when
     Name =:= ?ACTION_TYPE;

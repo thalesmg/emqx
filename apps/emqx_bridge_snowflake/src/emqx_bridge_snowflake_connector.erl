@@ -35,7 +35,7 @@
 ]).
 
 %% `ecpool_worker' API
--export([connect/1, disconnect/1]).
+-export([connect/1, disconnect/1, do_health_check_connector/1]).
 
 %% `emqx_connector_aggreg_delivery' API
 -export([
@@ -344,6 +344,7 @@ do_health_check_connector(ConnectionPid) ->
           ok | {error, term()}.
 do_stage_file(ODBCPool, Filename, Database, Schema, Stage) ->
     SQL0 = iolist_to_binary([ <<"PUT file://">>
+                                  %% TODO: use action as directory name on stage?
                             , Filename
                             , <<" @">>
                                   %% TODO: escape names?
@@ -401,7 +402,6 @@ handle_stage_file_result({error, Reason} = Error, Context) ->
 -spec init_transfer_state(buffer(), transfer_opts()) ->
     transfer_state().
 init_transfer_state(_Buffer, Opts) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{
         container := #{type := ContainerType},
         upload_options := #{
@@ -418,7 +418,6 @@ init_transfer_state(_Buffer, Opts) ->
         }
     } = Opts,
     FilenameTemplate = emqx_template:parse(<<"${action_res_id}_${seq_no}.${container_type}">>),
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{
         action_res_id => ActionResId,
 
@@ -447,13 +446,11 @@ init_transfer_state(_Buffer, Opts) ->
 -spec process_append(iodata(), transfer_state()) ->
     transfer_state().
 process_append(IOData, TransferState0) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{min_block_size := MinBlockSize} = TransferState0,
     Size = iolist_size(IOData),
     %% Open and write to file until minimum is reached
     TransferState1 = ensure_file(TransferState0),
     #{written := Written} = TransferState2 = append_to_file(IOData, Size, TransferState1),
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{ts2 => TransferState2, ts0 => TransferState0, data => IOData, contents => file:read_file(maps:get(filename, TransferState2))}]),
     case Written >= MinBlockSize of
         true ->
             'Elixir.IO':inspect(#{}, []),
@@ -512,15 +509,12 @@ close_and_enqueue_file(TransferState0) ->
 -spec process_write(transfer_state()) ->
     {ok, transfer_state()} | {error, term()}.
 process_write(TransferState0) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{next_file := NextFile0} = TransferState0,
     case queue:out(NextFile0) of
         {{value, {Filename, Size}}, NextFile} ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{f => Filename, s => Size, nf => NextFile}]),
             ?tp(snowflake_will_stage_file, #{}),
             do_process_write(Filename, Size, TransferState0#{next_file := NextFile});
         {empty, _} ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             {ok, TransferState0}
     end.
 
@@ -536,20 +530,17 @@ do_process_write(Filename, Size, TransferState0) ->
      } = TransferState0,
     case do_stage_file(ODBCPool, Filename, Database, Schema, Stage) of
         {ok, Target} ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{t => Target}]),
             StagedFile = #{path => Target, size => Size},
             StagedFiles = [StagedFile | StagedFiles0],
             TransferState = TransferState0#{staged_files := StagedFiles},
             process_write(TransferState);
         {error, Reason} ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{r => Reason}]),
             {error, Reason}
     end.
 
 -spec process_complete(transfer_state()) ->
     {ok, term()}.
 process_complete(TransferState0) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
     #{written := Written0} = TransferState0,
     maybe
         %% Flush any left-over data
@@ -561,16 +552,15 @@ process_complete(TransferState0) ->
                 false ->
                     {ok, TransferState0}
             end,
-        ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{ts => TransferState}]),
         #{ http_pool := HTTPPool
          , http_client_config := HTTPClientConfig
          , staged_files := StagedFiles
          } = TransferState,
         case do_insert_files_request(StagedFiles, HTTPPool, HTTPClientConfig) of
-            _X ->
-                ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{x => _X}]),
-                'Elixir.IO':inspect(_X),
-                {ok, todo}
+            {ok, 200, _, Body} ->
+                {ok, emqx_utils_json:decode(Body, [return_maps])};
+            Res ->
+                exit({insert_failed, Res})
         end
     end.
 
@@ -718,14 +708,11 @@ destroy_action(ActionResId, ActionState) ->
     ok.
 
 run_aggregated_action(Batch, #{aggreg_id := AggregId}) ->
-    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{batch => Batch}]),
     Timestamp = erlang:system_time(second),
     case emqx_connector_aggregator:push_records(AggregId, Timestamp, Batch) of
         ok ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{}]),
             ok;
         {error, Reason} ->
-            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE},#{r => Reason}]),
             {error, {unrecoverable_error, Reason}}
     end.
 
@@ -804,7 +791,6 @@ do_insert_files_request(StagedFiles, HTTPPool, HTTPClientConfig) ->
                  RequestTTL,
                  MaxRetries
                 ),
-    'Elixir.IO':inspect(#{res => Response, req => Req}, [{label, config}]),
     Response.
 
 do_insert_report_request(HTTPPool, Opts, HTTPClientConfig) ->

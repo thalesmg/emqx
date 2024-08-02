@@ -182,6 +182,7 @@ add_source_hookpoint(Config) ->
     on_exit(fun() -> emqx_hooks:del(Hookpoint, {?MODULE, source_hookpoint_callback}) end),
     ok.
 
+%% action/source resource id
 resource_id(Config) ->
     #{
         kind := Kind,

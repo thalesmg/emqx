@@ -50,7 +50,7 @@ init_per_suite(Config) ->
     case os:getenv("SNOWFLAKE_ACCOUNT_ID") of
         false ->
             %% Have to mock snowflake...
-            {skip, todo};
+            {skip, mocked};
         AccountId ->
             Server = iolist_to_binary([AccountId, ".snowflakecomputing.com"]),
             Username = os:getenv("SNOWFLAKE_USERNAME"),
@@ -85,9 +85,9 @@ end_per_suite(Config) ->
 init_per_testcase(TestCase, Config0) ->
     ct:timetrap(timer:seconds(90)),
     AccountId = ?config(account_id, Config0),
-    Server = ?config(server, Config0),
     Username = ?config(username, Config0),
     Password = ?config(password, Config0),
+    Server = ?config(server, Config0),
     UniqueNum = integer_to_binary(erlang:unique_integer()),
     Name = <<(atom_to_binary(TestCase))/binary, UniqueNum/binary>>,
     ConnectorConfig = connector_config(Name, AccountId, Server, Username, Password),
@@ -172,9 +172,8 @@ aggregated_action_config(Overrides0) ->
                   <<"max_retries">> => 3
                 },
             <<"resource_opts">> => #{
-                %% Batch is not yet supported
-                %% <<"batch_size">> => 1,
-                %% <<"batch_time">> => <<"0ms">>,
+                <<"batch_size">> => 10,
+                <<"batch_time">> => <<"100ms">>,
                 <<"buffer_mode">> => <<"memory_only">>,
                 <<"buffer_seg_bytes">> => <<"10MB">>,
                 <<"health_check_interval">> => <<"1s">>,
@@ -318,6 +317,8 @@ t_create_via_http(Config) ->
     io:put_chars(hocon_pp:do(emqx_config:get_raw([]), #{})),
     ok.
 
+%% Unfortunately, there's no way to use toxiproxy to proxy to the real snowflake, as it
+%% requires SSL and the hostname mismatch impedes the connection...
 t_on_get_status(Config) ->
     ok = emqx_bridge_v2_testlib:t_on_get_status(Config),
     ok.

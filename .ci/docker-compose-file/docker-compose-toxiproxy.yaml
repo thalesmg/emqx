@@ -10,6 +10,7 @@ services:
         aliases:
           - toxiproxy
           - toxiproxy.emqx.net
+          - toxi-proxy.snowflakecomputing.com
     volumes:
       - "./toxiproxy.json:/config/toxiproxy.json"
     ports:

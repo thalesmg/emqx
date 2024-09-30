@@ -524,6 +524,9 @@ set_max_records(TCConfig, MaxRecords) ->
         )
     end).
 
+simplify_result(Res) ->
+    emqx_bridge_v2_testlib:simplify_result(Res).
+
 %%------------------------------------------------------------------------------
 %% Testcases
 %%------------------------------------------------------------------------------
@@ -1102,7 +1105,7 @@ t_aggreg_inexistent_database(Config) ->
                         <<"error">> :=
                             <<"{unhealthy_target,", _/binary>>
                     }},
-                    emqx_bridge_v2_testlib:simplify_result(
+                    simplify_result(
                         emqx_bridge_v2_testlib:get_action_api(Config)
                     )
                 )
@@ -1155,10 +1158,94 @@ t_wrong_snowpipe_user(Config) ->
                     #{<<"parameters">> => #{<<"pipe_user">> => <<"idontexist">>}}
                 )
             ),
+            Messages1 = lists:map(fun mk_message/1, [
+                {<<"C1">>, <<"sf/a/b/c">>, <<"{\"hello\":\"world\"}">>},
+                {<<"C2">>, <<"sf/foo/bar">>, <<"baz">>},
+                {<<"C3">>, <<"sf/t/42">>, <<"">>}
+            ]),
+            ok = publish_messages(Messages1),
+            %% Wait until the insert files request fails
+            ct:pal("waiting for delivery to fail..."),
+            ?block_until(#{?snk_kind := "aggregated_buffer_delivery_failed"}),
+            %%
             ok
         end,
         []
     ),
+    ok.
+
+%% Verifies the following scenario:
+%%   1) A connector with bad config (wrong URL) and its action are created.
+%%   2) Some data is sent to the action and files are (attempted to be) staged.
+%%   3) Action becomes an "unhealthy_target".
+%%   4) Connector config is fixed.
+%%   5) We attempt to "reconnect" the action (`start' operation in API).
+%% After this, the action should be healthy.
+t_fix_connector_with_data(Config) ->
+    ActionName = ?config(action_name, Config),
+    ?check_trace(
+       emqx_bridge_v2_testlib:snk_timetrap(),
+       begin
+           %%   1) A connector with bad config (wrong URL) and its action are created.
+              {201, _} = simplify_result(emqx_bridge_v2_testlib:create_connector_api(
+                Config,
+                #{<<"account">> => <<"wrongacc-ountid">>}
+               )),
+           ?assertMatch(
+              {201, #{<<"error">> := <<"{unhealthy_target,", _/binary>>}},
+              simplify_result(
+                emqx_bridge_v2_testlib:create_kind_api(Config)
+               )
+             ),
+           %%   2) Some data is sent to the action and files are (attempted to be) staged.
+           Messages1 = lists:map(fun mk_message/1, [
+                {<<"C1">>, <<"sf/a/b/c">>, <<"{\"hello\":\"world\"}">>},
+                {<<"C2">>, <<"sf/foo/bar">>, <<"baz">>},
+                {<<"C3">>, <<"sf/t/42">>, <<"">>}
+            ]),
+            ok = publish_messages(Messages1),
+            %% Wait until the insert files request fails
+            ct:pal("waiting for delivery to fail..."),
+            ?block_until(#{?snk_kind := "aggregated_buffer_delivery_failed"}),
+           %%   3) Action becomes an "unhealthy_target".
+            ?retry(
+                _Sleep = 500,
+                _Retries = 10,
+                ?assertMatch(
+                    {200, #{
+                        <<"error">> :=
+                            <<"{unhealthy_target,", _/binary>>
+                    }},
+                    simplify_result(
+                        emqx_bridge_v2_testlib:get_action_api(Config)
+                    )
+                )
+            ),
+           %%   4) Connector config is fixed.
+           ?assertMatch(
+              {ok, bah},
+              simplify_result(emqx_bridge_v2_testlib:create_connector_api(Config))
+             ),
+           %%   5) We attempt to "reconnect" the action (`start' operation in API).
+           ?assertMatch(
+              {bah},
+              simplify_result(
+                emqx_bridge_v2_testlib:op_bridge_api(action, "start", ?ACTION_TYPE_BIN, ActionName))
+             ),
+           %% After this, the action should be healthy.
+                ?assertMatch(
+                    {200, #{
+                        <<"error">> :=
+                            <<"{todo,", _/binary>>
+                    }},
+                    simplify_result(
+                        emqx_bridge_v2_testlib:get_action_api(Config)
+                    )
+                ),
+           ok
+       end,
+       []
+      ),
     ok.
 
 %% Todo: test scenarios

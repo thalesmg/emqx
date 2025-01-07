@@ -27,6 +27,7 @@
 -export([schema_with_example/2, schema_with_examples/2]).
 -export([error_codes/1, error_codes/2]).
 -export([file_schema/1]).
+-export([page_sc/1, limit_sc/1]).
 -export([base_path/0]).
 -export([relative_uri/1, get_relative_uri/1]).
 -export([compose_filters/2]).
@@ -189,17 +190,9 @@ namespace() -> "public".
 
 -spec fields(hocon_schema:name()) -> hocon_schema:fields().
 fields(page) ->
-    Desc = <<"Page number of the results to fetch.">>,
-    Meta = #{in => query, desc => Desc, default => 1, example => 1},
-    [{page, hoconsc:mk(pos_integer(), Meta)}];
+    [page_sc(_Overrides = #{})];
 fields(limit) ->
-    Desc = iolist_to_binary([
-        <<"Results per page(max ">>,
-        integer_to_binary(?MAX_ROW_LIMIT),
-        <<")">>
-    ]),
-    Meta = #{in => query, desc => Desc, default => ?DEFAULT_ROW, example => 50},
-    [{limit, hoconsc:mk(range(1, ?MAX_ROW_LIMIT), Meta)}];
+    [limit_sc(_MetaOverrides = #{})];
 fields(cursor) ->
     Desc = <<"Opaque value representing the current iteration state.">>,
     Meta = #{required => false, in => query, desc => Desc},
@@ -349,6 +342,26 @@ compose_filters(Filter1, undefined) ->
     Filter1;
 compose_filters(Filter1, Filter2) ->
     [Filter1, Filter2].
+
+page_sc(#{} = MetaOverrides) ->
+    page_sc(fun(Meta0) -> maps:merge(Meta0, MetaOverrides) end);
+page_sc(MetaOverrideFn) when is_function(MetaOverrideFn, 1) ->
+    Desc = <<"Page number of the results to fetch.">>,
+    Meta0 = #{in => query, desc => Desc, default => 1, example => 1},
+    Meta = MetaOverrideFn(Meta0),
+    {page, hoconsc:mk(pos_integer(), Meta)}.
+
+limit_sc(#{} = MetaOverrides) ->
+    limit_sc(fun(Meta0) -> maps:merge(Meta0, MetaOverrides) end);
+limit_sc(MetaOverrideFn) when is_function(MetaOverrideFn, 1) ->
+    Desc = iolist_to_binary([
+        <<"Results per page(max ">>,
+        integer_to_binary(?MAX_ROW_LIMIT),
+        <<")">>
+    ]),
+    Meta0 = #{in => query, desc => Desc, default => ?DEFAULT_ROW, example => 50},
+    Meta = MetaOverrideFn(Meta0),
+    {limit, hoconsc:mk(range(1, ?MAX_ROW_LIMIT), Meta)}.
 
 %%------------------------------------------------------------------------------
 %% Private functions

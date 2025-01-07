@@ -72,7 +72,8 @@
     ntoa/1,
     foldl_while/3,
     is_restricted_str/1,
-    interactive_load/1
+    interactive_load/1,
+    list_drop/2
 ]).
 
 -export([
@@ -929,6 +930,15 @@ base62(I) -> $0 + I - 52.
 interactive_load(Module) ->
     _ = catch apply(Module, module_info, [module]),
     ok.
+
+%% Similar to `lists:nthtail', but doesn't throw an error if the number of elements to
+%% drop is greater than the size of the list.  An empty list is returned instead.
+list_drop(0, List) ->
+    List;
+list_drop(_N, []) ->
+    [];
+list_drop(N, [_ | Rest]) when N > 0 ->
+    list_drop(N - 1, Rest).
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").

@@ -35,7 +35,8 @@
     check_api_schema/2,
     paths/0,
     schema/1,
-    namespace/0
+    namespace/0,
+    fields/1
 ]).
 
 %% API callbacks : actions
@@ -68,7 +69,8 @@
     lookup_from_local_node/2,
     get_metrics_from_local_node/2,
     lookup_from_local_node_v6/3,
-    get_metrics_from_local_node_v6/3
+    get_metrics_from_local_node_v6/3,
+    list_from_local_node_v7/2
 ]).
 
 -define(BPAPI_NAME, emqx_bridge).
@@ -246,9 +248,13 @@ schema("/actions") ->
             tags => [<<"actions">>],
             summary => <<"List bridges">>,
             description => ?DESC("desc_api1"),
+            parameters => list_parameters(),
             responses => #{
                 200 => emqx_dashboard_swagger:schema_with_example(
-                    array(emqx_bridge_v2_schema:actions_get_response()),
+                    hoconsc:union([
+                        array(emqx_bridge_v2_schema:actions_get_response()),
+                        hoconsc:ref(list_paginated_response_actions)
+                    ]),
                     bridge_info_array_example(get, ?ROOT_KEY_ACTIONS)
                 )
             }
@@ -456,10 +462,14 @@ schema("/sources") ->
             tags => [<<"sources">>],
             summary => <<"List sources">>,
             description => ?DESC("desc_api1"),
+            parameters => list_parameters(),
             responses => #{
                 %% FIXME: examples
                 200 => emqx_dashboard_swagger:schema_with_example(
-                    array(emqx_bridge_v2_schema:sources_get_response()),
+                    hoconsc:union([
+                        array(emqx_bridge_v2_schema:sources_get_response()),
+                        hoconsc:ref(list_paginated_response_sources)
+                    ]),
                     bridge_info_array_example(get, ?ROOT_KEY_SOURCES)
                 )
             }
@@ -659,6 +669,33 @@ schema("/source_types") ->
         }
     }.
 
+fields(list_paginated_response_actions) ->
+    list_paginated_response(action);
+fields(list_paginated_response_sources) ->
+    list_paginated_response(source).
+
+list_parameters() ->
+    [
+        emqx_dashboard_swagger:page_sc(fun(Meta0) ->
+            maps:remove(default, Meta0#{required => false})
+        end),
+        emqx_dashboard_swagger:limit_sc(fun(Meta0) ->
+            maps:remove(default, Meta0#{required => false})
+        end)
+    ].
+
+list_paginated_response(ActionOrSource) ->
+    case ActionOrSource of
+        action ->
+            RespType = emqx_bridge_v2_schema:actions_get_response();
+        source ->
+            RespType = emqx_bridge_v2_schema:sources_get_response()
+    end,
+    [
+        {data, mk(array(RespType), #{})},
+        {meta, mk(hoconsc:ref(emqx_dashboard_swagger, meta), #{})}
+    ].
+
 %%------------------------------------------------------------------------------
 
 check_api_schema(Request, ReqMeta = #{path := "/actions/:id", method := put}) ->
@@ -701,8 +738,8 @@ refine_api_schema(Schema, ReqMeta = #{path := Path, method := Method}) ->
 %%================================================================================
 '/actions'(post, #{body := #{<<"type">> := BridgeType, <<"name">> := BridgeName} = Conf0}) ->
     handle_create(?ROOT_KEY_ACTIONS, BridgeType, BridgeName, Conf0);
-'/actions'(get, _Params) ->
-    handle_list(?ROOT_KEY_ACTIONS).
+'/actions'(get, #{query_string := QString}) ->
+    handle_list(?ROOT_KEY_ACTIONS, QString).
 
 '/actions/:id'(get, #{bindings := #{id := Id}}) ->
     ?TRY_PARSE_ID(Id, lookup_from_all_nodes(?ROOT_KEY_ACTIONS, BridgeType, BridgeName, 200));
@@ -742,8 +779,8 @@ refine_api_schema(Schema, ReqMeta = #{path := Path, method := Method}) ->
 %%================================================================================
 '/sources'(post, #{body := #{<<"type">> := BridgeType, <<"name">> := BridgeName} = Conf0}) ->
     handle_create(?ROOT_KEY_SOURCES, BridgeType, BridgeName, Conf0);
-'/sources'(get, _Params) ->
-    handle_list(?ROOT_KEY_SOURCES).
+'/sources'(get, #{query_string := QString}) ->
+    handle_list(?ROOT_KEY_SOURCES, QString).
 
 '/sources/:id'(get, #{bindings := #{id := Id}}) ->
     ?TRY_PARSE_ID(Id, lookup_from_all_nodes(?ROOT_KEY_SOURCES, BridgeType, BridgeName, 200));
@@ -783,7 +820,33 @@ refine_api_schema(Schema, ReqMeta = #{path := Path, method := Method}) ->
 %% Handlers
 %%------------------------------------------------------------------------------
 
-handle_list(ConfRootKey) ->
+handle_list(ConfRootKey, QString) ->
+    Page0 = maps:get(<<"page">>, QString, undefined),
+    Size0 = maps:get(<<"limit">>, QString, undefined),
+    case {Page0, Size0} of
+        {undefined, undefined} ->
+            %% Client expecting legacy API behavior.
+            handle_list_legacy(ConfRootKey);
+        {_, _} ->
+            Page = emqx_maybe:define(Page0, 1),
+            Size = emqx_maybe:define(Size0, 10),
+            handle_list_paginated(ConfRootKey, Page, Size)
+    end.
+
+handle_list_paginated(ConfRootKey, Page, Size) ->
+    Opts = #{page => Page, size => Size},
+    Nodes = nodes_supporting_bpapi_version(7),
+    NodeReplies = emqx_bridge_proto_v7:v2_list_bridges_on_nodes_v7(Nodes, ConfRootKey, Opts),
+    case is_ok(NodeReplies) of
+        {ok, AllBridges} ->
+            ?OK(zip_paginated_bridges(ConfRootKey, Page, Size, AllBridges));
+        {error, Reason} ->
+            ?INTERNAL_ERROR(Reason)
+    end.
+
+%% This is the legacy response: all actions/sources are returned.  We retain this function
+%% to answer clients that expect the old API response type.
+handle_list_legacy(ConfRootKey) ->
     Nodes = nodes_supporting_bpapi_version(6),
     NodeReplies = emqx_bridge_proto_v6:v2_list_bridges_on_nodes_v6(Nodes, ConfRootKey),
     case is_ok(NodeReplies) of
@@ -1151,14 +1214,31 @@ maybe_unwrap({error, not_implemented}) ->
 maybe_unwrap(RpcMulticallResult) ->
     emqx_rpc:unwrap_erpc(RpcMulticallResult).
 
+%% Assuming all nodes have the same total count of actions/sources.
+zip_paginated_bridges(ConfRootKey, Page, Size, [#{total := Total} | _] = Results) ->
+    HasNext = Total > Page * Size,
+    Meta = #{
+        page => Page,
+        limit => Size,
+        count => Total,
+        hasnext => HasNext
+    },
+    BridgesAllNodes = lists:map(fun(#{data := Data}) -> Data end, Results),
+    #{
+        data => zip_bridges(ConfRootKey, BridgesAllNodes),
+        meta => Meta
+    }.
+
 zip_bridges(ConfRootKey, [BridgesFirstNode | _] = BridgesAllNodes) ->
-    lists:foldl(
-        fun(#{type := Type, name := Name}, Acc) ->
-            Bridges = pick_bridges_by_id(Type, Name, BridgesAllNodes),
-            [format_bridge_info(ConfRootKey, Type, Name, Bridges) | Acc]
-        end,
-        [],
-        BridgesFirstNode
+    lists:reverse(
+        lists:foldl(
+            fun(#{type := Type, name := Name}, Acc) ->
+                Bridges = pick_bridges_by_id(Type, Name, BridgesAllNodes),
+                [format_bridge_info(ConfRootKey, Type, Name, Bridges) | Acc]
+            end,
+            [],
+            BridgesFirstNode
+        )
     ).
 
 pick_bridges_by_id(Type, Name, BridgesAllNodes) ->
@@ -1244,6 +1324,16 @@ get_metrics_from_local_node(ActionType, ActionName) ->
 %% RPC Target
 get_metrics_from_local_node_v6(ConfRootKey, Type, Name) ->
     format_metrics(emqx_bridge_v2:get_metrics(ConfRootKey, Type, Name)).
+
+%% RPC Target
+list_from_local_node_v7(ConfRootKey, Opts) ->
+    Page = maps:get(page, Opts, 1),
+    Size = maps:get(size, Opts, 10),
+    LookupFn = fun(Type, Name) ->
+        {ok, BridgeInfo} = emqx_bridge_v2:lookup(ConfRootKey, Type, Name),
+        format_resource(ConfRootKey, BridgeInfo, node())
+    end,
+    emqx_bridge_v2:map_paginated(ConfRootKey, Page, Size, LookupFn).
 
 %% resource
 format_resource(

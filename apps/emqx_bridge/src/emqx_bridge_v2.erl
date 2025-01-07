@@ -90,6 +90,7 @@
 ]).
 
 -export([diff_confs/2]).
+-export([map_paginated/4]).
 
 %% Exported for tests
 -export([
@@ -394,14 +395,12 @@ list_with_lookup_fun(ConfRootName, LookupFun) ->
             maps:fold(
                 fun(Name, _RawConf, Acc) ->
                     [
-                        begin
-                            case LookupFun(Type, Name) of
-                                {ok, BridgeInfo} ->
-                                    BridgeInfo;
-                                {error, not_bridge_v1_compatible} = Err ->
-                                    %% Filtered out by the caller
-                                    Err
-                            end
+                        case LookupFun(Type, Name) of
+                            {ok, BridgeInfo} ->
+                                BridgeInfo;
+                            {error, not_bridge_v1_compatible} = Err ->
+                                %% Filtered out by the caller
+                                Err
                         end
                         | Acc
                     ]
@@ -413,6 +412,30 @@ list_with_lookup_fun(ConfRootName, LookupFun) ->
         [],
         emqx:get_raw_config([ConfRootName], #{})
     ).
+
+map_paginated(ConfRootName, Page, Size, LookupFn) ->
+    RawConfig = emqx:get_raw_config([ConfRootName], #{}),
+    FlatList0 = lists:sort(
+        [
+            {Type, Name}
+         || {Type, NameAndConf} <- maps:to_list(RawConfig),
+            {Name, _Conf} <- maps:to_list(NameAndConf)
+        ]
+    ),
+    Total = length(FlatList0),
+    Drop = (Page - 1) * Size,
+    FlatList1 = emqx_utils:list_drop(Drop, FlatList0),
+    FlatList = lists:sublist(FlatList1, Size),
+    Data = lists:map(
+        fun({Type, Name}) ->
+            LookupFn(Type, Name)
+        end,
+        FlatList
+    ),
+    #{
+        data => Data,
+        total => Total
+    }.
 
 install_bridge_v2(
     _RootName,

@@ -48,6 +48,7 @@
     '/actions/:id/:operation'/2,
     '/nodes/:node/actions/:id/:operation'/2,
     '/actions_probe'/2,
+    '/actions_summary'/2,
     '/action_types'/2
 ]).
 %% API callbacks : sources
@@ -60,6 +61,7 @@
     '/sources/:id/:operation'/2,
     '/nodes/:node/sources/:id/:operation'/2,
     '/sources_probe'/2,
+    '/sources_summary'/2,
     '/source_types'/2
 ]).
 
@@ -68,7 +70,8 @@
     lookup_from_local_node/2,
     get_metrics_from_local_node/2,
     lookup_from_local_node_v6/3,
-    get_metrics_from_local_node_v6/3
+    get_metrics_from_local_node_v6/3,
+    summary_from_local_node_v7/1
 ]).
 
 -define(BPAPI_NAME, emqx_bridge).
@@ -114,6 +117,7 @@ paths() ->
         "/actions/:id/metrics",
         "/actions/:id/metrics/reset",
         "/actions_probe",
+        "/actions_summary",
         "/action_types",
         %%=============
         %% Sources
@@ -128,6 +132,7 @@ paths() ->
         "/sources/:id/metrics",
         "/sources/:id/metrics/reset",
         "/sources_probe",
+        "/sources_summary",
         "/source_types"
     ].
 
@@ -425,6 +430,23 @@ schema("/actions_probe") ->
             }
         }
     };
+schema("/actions_summary") ->
+    #{
+        'operationId' => '/actions_summary',
+        get => #{
+            tags => [<<"actions">>],
+            summary => <<"Summarize actions">>,
+            description => ?DESC("actions_summary"),
+            responses => #{
+                200 => emqx_dashboard_swagger:schema_with_example(
+                    %% FIXME:
+                    array(map()),
+                    %% FIXME:
+                    bridge_info_array_example(get, ?ROOT_KEY_ACTIONS)
+                )
+            }
+        }
+    };
 schema("/action_types") ->
     #{
         'operationId' => '/action_types',
@@ -637,6 +659,23 @@ schema("/sources_probe") ->
             }
         }
     };
+schema("/sources_summary") ->
+    #{
+        'operationId' => '/sources_summary',
+        get => #{
+            tags => [<<"sources">>],
+            summary => <<"Summarize sources">>,
+            description => ?DESC("sources_summary"),
+            responses => #{
+                200 => emqx_dashboard_swagger:schema_with_example(
+                    %% FIXME:
+                    array(map()),
+                    %% FIXME:
+                    bridge_info_array_example(get, ?ROOT_KEY_SOURCES)
+                )
+            }
+        }
+    };
 schema("/source_types") ->
     #{
         'operationId' => '/source_types',
@@ -735,6 +774,9 @@ refine_api_schema(Schema, ReqMeta = #{path := Path, method := Method}) ->
 '/actions_probe'(post, Request) ->
     handle_probe(?ROOT_KEY_ACTIONS, Request).
 
+'/actions_summary'(get, _Request) ->
+    handle_summary(?ROOT_KEY_ACTIONS).
+
 '/action_types'(get, _Request) ->
     ?OK(emqx_bridge_v2_schema:action_types()).
 %%================================================================================
@@ -776,6 +818,9 @@ refine_api_schema(Schema, ReqMeta = #{path := Path, method := Method}) ->
 '/sources_probe'(post, Request) ->
     handle_probe(?ROOT_KEY_SOURCES, Request).
 
+'/sources_summary'(get, _Request) ->
+    handle_summary(?ROOT_KEY_SOURCES).
+
 '/source_types'(get, _Request) ->
     ?OK(emqx_bridge_v2_schema:source_types()).
 
@@ -792,6 +837,16 @@ handle_list(ConfRootKey) ->
                 [format_resource(ConfRootKey, Data, Node) || Data <- Bridges]
              || {Node, Bridges} <- lists:zip(Nodes, NodeBridges)
             ],
+            ?OK(zip_bridges(ConfRootKey, AllBridges));
+        {error, Reason} ->
+            ?INTERNAL_ERROR(Reason)
+    end.
+
+handle_summary(ConfRootKey) ->
+    Nodes = nodes_supporting_bpapi_version(7),
+    NodeReplies = emqx_bridge_proto_v7:v2_list_summary_v7(Nodes, ConfRootKey),
+    case is_ok(NodeReplies) of
+        {ok, AllBridges} ->
             ?OK(zip_bridges(ConfRootKey, AllBridges));
         {error, Reason} ->
             ?INTERNAL_ERROR(Reason)
@@ -1244,6 +1299,31 @@ get_metrics_from_local_node(ActionType, ActionName) ->
 %% RPC Target
 get_metrics_from_local_node_v6(ConfRootKey, Type, Name) ->
     format_metrics(emqx_bridge_v2:get_metrics(ConfRootKey, Type, Name)).
+
+%% RPC Target
+summary_from_local_node_v7(ConfRootKey) ->
+    lists:map(
+        fun(BridgeInfo) ->
+            #{
+                type := Type,
+                name := Name,
+                status := Status,
+                error := Error,
+                resource_data := ResourceData
+            } = BridgeInfo,
+            IsEnabled = emqx_utils_maps:deep_get([config, enable], ResourceData, true),
+            maps:merge(
+                #{
+                    node => node(),
+                    type => Type,
+                    name => Name,
+                    enabled => IsEnabled
+                },
+                format_bridge_status_and_error(#{status => Status, error => Error})
+            )
+        end,
+        emqx_bridge_v2:list(ConfRootKey)
+    ).
 
 %% resource
 format_resource(

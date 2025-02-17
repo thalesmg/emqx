@@ -38,7 +38,9 @@
     channel_health_check/2,
     add_channel/3,
     add_channel/4,
+    add_channel_async/3,
     remove_channel/2,
+    remove_channel_async/2,
     get_channels/1
 ]).
 
@@ -64,8 +66,12 @@
 % Behaviour
 -export([init/1, callback_mode/0, handle_event/4, terminate/3]).
 
+%% Test/debug only
+-export([get_channel_configs/1]).
+
 %% Internal exports.
 -export([worker_resource_health_check/1, worker_channel_health_check/2]).
+-export([wait_for_ready/2]).
 
 -ifdef(TEST).
 -export([stop/2]).
@@ -165,8 +171,10 @@
 
 %% calls/casts/generic timeouts
 -record(add_channel, {channel_id :: channel_id(), config :: map()}).
+-record(remove_channel, {channel_id :: channel_id()}).
 -record(start_channel_health_check, {channel_id :: channel_id()}).
 -record(retry_add_channel, {channel_id :: channel_id()}).
+-record(get_channel_configs, {}).
 
 -type generic_timeout(Id, Content) :: {{timeout, Id}, timeout(), Content}.
 -type start_channel_health_check_action() :: generic_timeout(
@@ -479,11 +487,21 @@ add_channel(ResId, ChannelId, Config, Opts) ->
     end,
     Result.
 
+add_channel_async(ResId, ChannelId, Config) ->
+    safe_cast(ResId, #add_channel{channel_id = ChannelId, config = Config}).
+
 remove_channel(ResId, ChannelId) ->
-    safe_call(ResId, {remove_channel, ChannelId}, ?T_OPERATION).
+    safe_call(ResId, #remove_channel{channel_id = ChannelId}, ?T_OPERATION).
+
+remove_channel_async(ResId, ChannelId) ->
+    safe_cast(ResId, #remove_channel{channel_id = ChannelId}).
 
 get_channels(ResId) ->
     safe_call(ResId, get_channels, ?T_OPERATION).
+
+%% Test/debug only.
+get_channel_configs(ResId) ->
+    safe_call(ResId, #get_channel_configs{}, ?T_OPERATION).
 
 -spec get_query_mode_and_last_error(resource_id(), query_opts()) ->
     {ok, {query_mode(), LastError}} | {error, not_found}
@@ -705,9 +723,15 @@ handle_event(internal, start_resource, ?state_connecting, Data) ->
 handle_event(state_timeout, health_check, ?state_connecting, Data) ->
     start_resource_health_check(Data);
 handle_event(
-    {call, From}, {remove_channel, ChannelId}, ?state_connecting = _State, Data
+    {call, From}, #remove_channel{channel_id = ChannelId}, ?state_connecting = _State, Data
 ) ->
-    handle_remove_channel(From, ChannelId, Data);
+    {Actions, Data} = handle_remove_channel(From, ChannelId, Data),
+    {keep_state, Data, Actions};
+handle_event(
+    cast, #remove_channel{channel_id = _ChannelId} = Op, ?state_connecting = State, Data0
+) ->
+    {Actions, Data} = collect_and_handle_channel_operations_not_connected(Op, State, Data0),
+    {keep_state, Data, Actions};
 %%--------------------------
 %% State: CONNECTED
 %% The connected state is entered after a successful on_start/2 of the callback mod
@@ -724,13 +748,28 @@ handle_event(
     {call, From},
     #add_channel{channel_id = ChannelId, config = Config},
     ?state_connected = _State,
-    Data
+    Data0
 ) ->
-    handle_add_channel(From, Data, ChannelId, Config);
+    {Actions, Data} = handle_add_channel(From, Data0, ChannelId, Config),
+    {keep_state, Data, Actions};
 handle_event(
-    {call, From}, {remove_channel, ChannelId}, ?state_connected = _State, Data
+    cast,
+    #add_channel{channel_id = _ChannelId, config = _Config} = Op,
+    ?state_connected = _State,
+    Data0
 ) ->
-    handle_remove_channel(From, ChannelId, Data);
+    {Actions, Data} = collect_and_handle_channel_operations_connected(Op, Data0),
+    {keep_state, Data, Actions};
+handle_event(
+    {call, From}, #remove_channel{channel_id = ChannelId}, ?state_connected = _State, Data0
+) ->
+    {Actions, Data} = handle_remove_channel(From, ChannelId, Data0),
+    {keep_state, Data, Actions};
+handle_event(
+    cast, #remove_channel{channel_id = _ChannelId} = Op, ?state_connected = _State, Data0
+) ->
+    {Actions, Data} = collect_and_handle_channel_operations_connected(Op, Data0),
+    {keep_state, Data, Actions};
 handle_event(
     {timeout, #start_channel_health_check{channel_id = ChannelId}},
     _,
@@ -765,18 +804,38 @@ handle_event(enter, _OldState, ?state_stopped = State, Data0) ->
 %% The following events can be handled in any other state
 %%--------------------------
 handle_event(
-    {call, From}, #add_channel{channel_id = ChannelId, config = Config}, State, Data
+    {call, From}, #add_channel{channel_id = ChannelId, config = Config}, State, Data0
 ) ->
-    handle_not_connected_add_channel(From, ChannelId, Config, State, Data);
+    {Actions, Data} = handle_not_connected_add_channel(From, ChannelId, Config, State, Data0),
+    {keep_state, Data, Actions};
 handle_event(
-    {call, From}, {remove_channel, ChannelId}, _State, Data
+    cast, #add_channel{channel_id = _ChannelId, config = _Config} = Op, State, Data0
 ) ->
-    handle_not_connected_and_not_connecting_remove_channel(From, ChannelId, Data);
+    {Actions, Data} = collect_and_handle_channel_operations_not_connected(Op, State, Data0),
+    {keep_state, Data, Actions};
+handle_event(
+    {call, From}, #remove_channel{channel_id = ChannelId}, _State, Data0
+) ->
+    {Actions, Data} = handle_not_connected_and_not_connecting_remove_channel(
+        From, ChannelId, Data0
+    ),
+    {keep_state, Data, Actions};
+handle_event(
+    cast, #remove_channel{channel_id = _ChannelId} = Op, State, Data0
+) ->
+    {Actions, Data} = collect_and_handle_channel_operations_not_connected(Op, State, Data0),
+    {keep_state, Data, Actions};
 handle_event(
     {call, From}, get_channels, _State, Data
 ) ->
     Channels = emqx_resource:call_get_channels(Data#data.id, Data#data.mod),
     {keep_state_and_data, {reply, From, {ok, Channels}}};
+handle_event(
+    {call, From}, #get_channel_configs{}, _State, Data
+) ->
+    #data{added_channels = Channels} = Data,
+    Reply = maps:map(fun(_ChannelId, #{config := Config}) -> Config end, Channels),
+    {keep_state_and_data, {reply, From, Reply}};
 handle_event(
     info,
     {'EXIT', Pid, Res},
@@ -1109,20 +1168,21 @@ handle_add_channel(From, Data, ChannelId, Config) ->
             %% take care of the rest
             NewChannels = maps:put(ChannelId, channel_status_not_added(Config), Channels),
             NewData = Data#data{added_channels = NewChannels},
-            {keep_state, update_state(NewData), [
-                {reply, From, ok}
-            ]};
+            Actions = [{reply, From, ok} || From /= undefined],
+            {Actions, update_state(NewData)};
         true ->
             %% The channel is already installed in the connector state
             %% We don't need to install it again
-            {keep_state_and_data, [{reply, From, ok}]}
+            Actions = [{reply, From, ok} || From /= undefined],
+            {Actions, Data}
     end.
 
 handle_not_connected_add_channel(From, ChannelId, ChannelConfig, State, Data) ->
     %% When state is not connected the channel will be added to the channels
     %% map but nothing else will happen.
     NewData = add_or_update_channel_status(Data, ChannelId, ChannelConfig, State),
-    {keep_state, update_state(NewData), [{reply, From, ok}]}.
+    Actions = [{reply, From, ok} || From /= undefined],
+    {Actions, update_state(NewData)}.
 
 handle_remove_channel(From, ChannelId, Data0) ->
     Data = abort_health_checks_for_channel(Data0, ChannelId),
@@ -1142,7 +1202,8 @@ handle_remove_channel(From, ChannelId, Data0) ->
             NewData = Data#data{
                 added_channels = NewAddedChannels
             },
-            {keep_state, NewData, [{reply, From, ok}]};
+            Actions = [{reply, From, ok} || From /= undefined],
+            {Actions, NewData};
         true ->
             %% The channel is installed in the connector state
             handle_remove_channel_exists(From, ChannelId, Data)
@@ -1161,12 +1222,14 @@ handle_remove_channel_exists(From, ChannelId, Data) ->
         )
     of
         {ok, NewState} ->
+            ok = emqx_resource:clear_metrics(ChannelId),
             NewAddedChannelsMap = maps:remove(ChannelId, AddedChannelsMap),
             UpdatedData = Data#data{
                 state = NewState,
                 added_channels = NewAddedChannelsMap
             },
-            {keep_state, update_state(UpdatedData), [{reply, From, ok}]};
+            Actions = [{reply, From, ok} || From /= undefined],
+            {Actions, update_state(UpdatedData)};
         {error, Reason} = Error ->
             IsDryRun = emqx_resource:is_dry_run(Id),
             ?tp("remove_channel_failed", #{resource_id => Id, reason => Reason}),
@@ -1180,7 +1243,9 @@ handle_remove_channel_exists(From, ChannelId, Data) ->
                 },
                 #{tag => tag(Group, Type)}
             ),
-            {keep_state_and_data, [{reply, From, Error}]}
+            Actions = [{reply, From, Error} || From /= undefined],
+            %% FIXME: should retry after a while
+            {Actions, Data}
     end.
 
 handle_not_connected_and_not_connecting_remove_channel(From, ChannelId, Data) ->
@@ -1192,7 +1257,8 @@ handle_not_connected_and_not_connecting_remove_channel(From, ChannelId, Data) ->
     NewData = Data#data{added_channels = NewChannels},
     IsDryRun = emqx_resource:is_dry_run(Data#data.id),
     _ = maybe_clear_alarm(IsDryRun, ChannelId),
-    {keep_state, update_state(NewData), [{reply, From, ok}]}.
+    Actions = [{reply, From, ok} || From /= undefined],
+    {Actions, update_state(NewData)}.
 
 handle_manual_resource_health_check(From, Data0 = #data{hc_workers = #{resource := HCWorkers}}) when
     map_size(HCWorkers) > 0
@@ -1894,6 +1960,18 @@ safe_call(ResId, Message, Timeout) ->
             {error, not_found}
     end.
 
+safe_cast(ResId, Message) ->
+    try
+        gen_statem:cast(?REF(ResId), Message)
+    catch
+        error:badarg ->
+            {error, not_found};
+        exit:{R, _} when R == noproc; R == normal; R == shutdown ->
+            {error, not_found};
+        exit:{{shutdown, removed}, _} ->
+            {error, not_found}
+    end.
+
 %% Helper functions for chanel status data
 
 channel_status_not_added(ChannelConfig) ->
@@ -2100,3 +2178,85 @@ abort_health_checks_for_channel(Data0, ChannelId) ->
         hc_workers = HCWorkers,
         hc_pending_callers = Pending
     }.
+
+collect_and_handle_channel_operations_connected(Op, Data0) ->
+    From = undefined,
+    Ops = collect_and_compress_channel_operations([Op]),
+    lists:foldl(
+        fun
+            (#add_channel{channel_id = ChannelId, config = Config}, {AccActions, AccData}) ->
+                {Actions, Data} = handle_add_channel(From, AccData, ChannelId, Config),
+                {Actions ++ AccActions, Data};
+            (#remove_channel{channel_id = ChannelId}, {AccActions, AccData}) ->
+                {Actions, Data} = handle_remove_channel(From, ChannelId, AccData),
+                {Actions ++ AccActions, Data}
+        end,
+        {[], Data0},
+        Ops
+    ).
+
+collect_and_handle_channel_operations_not_connected(Op, State, Data0) ->
+    From = undefined,
+    Ops = collect_and_compress_channel_operations([Op]),
+    lists:foldl(
+        fun
+            (#add_channel{channel_id = ChannelId, config = Config}, {AccActions, AccData}) ->
+                {Actions, Data} =
+                    handle_not_connected_add_channel(From, ChannelId, Config, State, AccData),
+                {Actions ++ AccActions, Data};
+            (#remove_channel{channel_id = ChannelId}, {AccActions, AccData}) when
+                State == ?state_connecting
+            ->
+                {Actions, Data} = handle_remove_channel(From, ChannelId, AccData),
+                {Actions ++ AccActions, Data};
+            (#remove_channel{channel_id = ChannelId}, {AccActions, AccData}) ->
+                {Actions, Data} =
+                    handle_not_connected_and_not_connecting_remove_channel(
+                        From, ChannelId, AccData
+                    ),
+                {Actions ++ AccActions, Data}
+        end,
+        {[], Data0},
+        Ops
+    ).
+
+collect_and_compress_channel_operations(Acc) ->
+    %% FIXME: cancel removal retry generic timeouts if last op is an `#add_channel{}'.
+    MaxRequests = 500,
+    Ops0 = collect_channel_operations(MaxRequests, Acc),
+    {Ops1, _} = lists:foldl(
+        fun(Op, {OpAcc, N}) ->
+            ChannelId = operation_channel_id(Op),
+            case OpAcc of
+                #{ChannelId := #{op := _} = Old} ->
+                    %% Just replace with newer
+                    {OpAcc#{ChannelId := Old#{op := Op}}, N};
+                #{} ->
+                    %% New channel id
+                    New = #{op => Op, n => N},
+                    {OpAcc#{ChannelId => New}, N + 1}
+            end
+        end,
+        {#{}, 0},
+        Ops0
+    ),
+    Ops2 = lists:map(fun(#{op := Op, n := N}) -> {N, Op} end, maps:values(Ops1)),
+    Ops = lists:keysort(1, Ops2),
+    lists:map(fun({_N, Op}) -> Op end, Ops).
+
+operation_channel_id(#add_channel{channel_id = ChannelId, config = _Config}) ->
+    ChannelId;
+operation_channel_id(#remove_channel{channel_id = ChannelId}) ->
+    ChannelId.
+
+collect_channel_operations(0, Acc) ->
+    lists:reverse(Acc);
+collect_channel_operations(N, Acc) ->
+    receive
+        {'$gen_cast', #add_channel{channel_id = _ChannelId, config = _Config} = Req} ->
+            collect_channel_operations(N - 1, [Req | Acc]);
+        {'$gen_cast', #remove_channel{channel_id = _ChannelId} = Req} ->
+            collect_channel_operations(N - 1, [Req | Acc])
+    after 0 ->
+        lists:reverse(Acc)
+    end.

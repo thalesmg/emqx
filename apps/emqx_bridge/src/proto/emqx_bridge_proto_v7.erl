@@ -40,7 +40,8 @@
     v2_start_bridge_on_all_nodes_v6/4,
 
     %% introduced in v7
-    v2_list_summary_v7/2
+    v2_list_summary_v7/2,
+    v2_wait_for_ready_v7/6
 ]).
 
 -include_lib("emqx/include/bpapi.hrl").
@@ -204,4 +205,22 @@ v2_start_bridge_on_node_v6(Node, ConfRootKey, BridgeType, BridgeName) ->
 v2_list_summary_v7(Nodes, ConfRootKey) ->
     erpc:multicall(
         Nodes, emqx_bridge_v2_api, summary_from_local_node_v7, [ConfRootKey], ?TIMEOUT
+    ).
+
+-spec v2_wait_for_ready_v7(
+    [node()],
+    emqx_bridge_v2:root_cfg_key(),
+    atom(),
+    binary(),
+    integer(),
+    integer()
+) ->
+    emqx_rpc:erpc_multicall([_]).
+v2_wait_for_ready_v7(Nodes, ConfRootKey, Type, Name, WaitTimeout, RPCTimeout) ->
+    erpc:multicall(
+        Nodes,
+        emqx_bridge_v2_api,
+        wair_for_ready_local_node_v7,
+        [ConfRootKey, Type, Name, WaitTimeout],
+        RPCTimeout
     ).

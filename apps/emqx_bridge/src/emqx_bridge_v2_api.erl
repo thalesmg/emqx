@@ -23,6 +23,7 @@
 -include_lib("emqx_utils/include/emqx_utils_api.hrl").
 -include_lib("emqx_bridge/include/emqx_bridge.hrl").
 -include_lib("emqx_bridge/include/emqx_bridge_proto.hrl").
+-include_lib("emqx_resource/include/emqx_resource.hrl").
 
 -import(hoconsc, [mk/2, array/1, enum/1]).
 -import(emqx_utils, [redact/1]).
@@ -73,7 +74,8 @@
     get_metrics_from_local_node/2,
     lookup_from_local_node_v6/3,
     get_metrics_from_local_node_v6/3,
-    summary_from_local_node_v7/1
+    summary_from_local_node_v7/1,
+    wait_for_ready_local_node_v7/4
 ]).
 
 -define(BPAPI_NAME, emqx_bridge).
@@ -974,6 +976,7 @@ handle_disable_enable(ConfRootKey, Id, Enable) ->
             emqx_bridge_v2:disable_enable(ConfRootKey, enable_func(Enable), BridgeType, BridgeName)
         of
             {ok, _} ->
+                wait_for_ready(ConfRootKey, BridgeType, BridgeName),
                 ?NO_CONTENT;
             {error, {pre_config_update, _, bridge_not_found}} ->
                 ?BRIDGE_NOT_FOUND(BridgeType, BridgeName);
@@ -1375,6 +1378,42 @@ summary_from_local_node_v7(ConfRootKey) ->
         emqx_bridge_v2:list(ConfRootKey)
     ).
 
+wait_for_ready(ConfRootKey, Type, Name) ->
+    Nodes = nodes_supporting_bpapi_version(7),
+    WaitTimeout = 5_000,
+    RPCTimeout = WaitTimeout + 1_000,
+    _ = emqx_bridge_proto_v7:v2_wait_for_ready_v7(
+        Nodes,
+        ConfRootKey,
+        Type,
+        Name,
+        WaitTimeout,
+        RPCTimeout
+    ),
+    ok.
+
+%% RPC Target
+-define(WAIT_FOR_CHANNEL_TIMEOUT, 100).
+wait_for_ready_local_node_v7(ConfRootKey, Type, Name, Timeout) ->
+    do_wait_for_ready(ConfRootKey, Type, Name, Timeout div ?WAIT_FOR_CHANNEL_TIMEOUT).
+
+do_wait_for_ready(_ConfRootKey, _Type, _Name, 0) ->
+    timeout;
+do_wait_for_ready(ConfRootKey, Type, Name, AttemptsLeft) ->
+    case emqx_bridge_v2:lookup(ConfRootKey, Type, Name) of
+        {error, not_found} ->
+            %% Impossible?  Maybe race with removal.
+            {error, not_found};
+        {ok, #{status := ?status_connected}} ->
+            ok;
+        {ok, #{status := ?status_disconnected, error := Error}} ->
+            {error, Error};
+        {ok, _} ->
+            timer:sleep(?WAIT_FOR_CHANNEL_TIMEOUT),
+            do_wait_for_ready(ConfRootKey, Type, Name, AttemptsLeft - 1)
+    end.
+-undef(WAIT_FOR_CHANNEL_TIMEOUT).
+
 %% resource
 format_resource(
     ConfRootKey,
@@ -1576,6 +1615,7 @@ create_or_update_bridge(ConfRootKey, BridgeType, BridgeName, Conf, HttpStatusCod
 do_create_or_update_bridge(ConfRootKey, BridgeType, BridgeName, Conf, HttpStatusCode) ->
     case emqx_bridge_v2:create(ConfRootKey, BridgeType, BridgeName, Conf) of
         {ok, _} ->
+            wait_for_ready(ConfRootKey, BridgeType, BridgeName),
             lookup_from_all_nodes(ConfRootKey, BridgeType, BridgeName, HttpStatusCode);
         {error, {PreOrPostConfigUpdate, _HandlerMod, Reason}} when
             PreOrPostConfigUpdate =:= pre_config_update;

@@ -18,10 +18,12 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
+-include_lib("proper/include/proper.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 -include_lib("emqx_resource/include/emqx_resource_buffer_worker_internal.hrl").
+-include_lib("emqx_resource/include/emqx_resource.hrl").
 
 -define(TEST_RESOURCE, emqx_connector_demo).
 -define(ID, <<"id">>).
@@ -3437,6 +3439,176 @@ t_dryrun_timeout_then_force_kill_during_stop(_Config) ->
         []
     ),
     ok.
+
+%%------------------------------------------------------------------------------
+%% Properties
+%%------------------------------------------------------------------------------
+
+%% Verifies that we compress operations for a given channel id that may happen to stack up
+%% while the resource manager process is stuck on a call.
+t_compress_channel_operations(_Config) ->
+    ?assert(
+        proper:quickcheck(prop_compress_channel_operations(), [{numtests, 100}, {to_file, user}])
+    ),
+    ok.
+
+prop_compress_channel_operations() ->
+    ?FORALL(
+        {ConnStatus, Commands},
+        {resource_status_gen(), list({range(1, 3), channel_op_gen()})},
+        begin
+            ConnResId = <<"connector:ctype:c">>,
+            AgentState0 = #{
+                resource_health_check => ConnStatus,
+                channel_health_check => connected
+            },
+            {ok, Agent} = emqx_utils_agent:start_link(AgentState0),
+            %% We mock the module so we may count the calls to add/remove channel
+            %% callbacks.
+            ok = meck:new(?TEST_RESOURCE, [passthrough]),
+            {ok, _} =
+                create(
+                    ConnResId,
+                    ?DEFAULT_RESOURCE_GROUP,
+                    ?TEST_RESOURCE,
+                    #{
+                        name => test_resource,
+                        health_check_agent => Agent
+                    },
+                    #{
+                        health_check_interval => 100,
+                        start_timeout => 100
+                    }
+                ),
+            ?assertMatch({ok, ConnStatus}, emqx_resource:health_check(ConnResId)),
+            %% We suspend the process so operations are stacked on its mailbox.
+            Pid = emqx_resource_manager:where(ConnResId),
+            ok = sys:suspend(Pid),
+            lists:foreach(
+                fun(Command) -> exec_channel_operation(Command, ConnResId) end,
+                Commands
+            ),
+            %% Resume and let it process everything.
+            ok = sys:resume(Pid),
+            %% To force processing of the mailbox, and trigger channel ops.
+            ?assertMatch({ok, ConnStatus}, emqx_resource:health_check(ConnResId)),
+            Channels = emqx_resource_manager:get_channel_configs(ConnResId),
+            {ok, InStateChannelsList} = emqx_resource_manager:get_channels(ConnResId),
+            InStateChannels = maps:from_list(InStateChannelsList),
+            {ok, _Group, ResData} = emqx_resource_manager:lookup_cached(ConnResId),
+            History = meck:history(?TEST_RESOURCE),
+            ok = meck:unload(?TEST_RESOURCE),
+            ok = emqx_resource:remove_local(ConnResId),
+            ExpectedOps = process_commands_expectation(Commands),
+            ExpectedChannels = maps:filter(fun(_, V) -> V /= del end, ExpectedOps),
+            %% Even if not added yet to the resource state, the known channel configs must
+            %% be the latest received additions, or the channel should be absent from
+            %% installed channels.
+            HasExpectedConfigs = ExpectedChannels =:= Channels,
+            %% If the resource status is connected, then the channel must also be in the
+            %% connector resource state.
+            IsInExpectedResState =
+                case ConnStatus of
+                    ?status_connected ->
+                        ExpectedChannels =:= InStateChannels;
+                    _ ->
+                        true
+                end,
+            %% We compress the operations so that operations that cancel out are not
+            %% executed needlessly.  We can only know which calls were made from the
+            %% callback module in the connected status.
+            ExpectedOpCount = map_size(ExpectedOps),
+            ActualOpCount = lists:sum([
+                1
+             || {_Pid, {?TEST_RESOURCE, Fn, _Args}, _Res} <- History,
+                lists:member(Fn, [on_add_channel, on_remove_channel])
+            ]),
+            IsCompressedAsExpected =
+                case ConnStatus of
+                    ?status_connected ->
+                        %% One op per distinct channel
+                        ExpectedOpCount =:= ActualOpCount;
+                    _ ->
+                        true
+                end,
+            ?WHENFAIL(
+                io:format(
+                    user,
+                    "Connector status:\n  ~s\n\n"
+                    "Commands:\n  ~p\n\n"
+                    "Expected Channels:\n  ~p\n\n"
+                    "Channels:\n  ~p\n\n"
+                    "Channels in state:\n  ~p\n\n"
+                    "Expected op count:\n  ~p\n\n"
+                    "Actual op count:\n  ~p\n\n"
+                    "Module call history:\n  ~p\n\n"
+                    "Resource:\n  ~p\n\n",
+                    [
+                        ConnStatus,
+                        Commands,
+                        ExpectedChannels,
+                        Channels,
+                        InStateChannels,
+                        ExpectedOpCount,
+                        ActualOpCount,
+                        History,
+                        ResData
+                    ]
+                ),
+                aggregate(
+                    [ConnStatus],
+                    aggregate(
+                        Commands,
+                        HasExpectedConfigs andalso
+                            IsInExpectedResState andalso
+                            IsCompressedAsExpected
+                    )
+                )
+            )
+        end
+    ).
+
+process_commands_expectation(Commands) ->
+    lists:foldl(
+        fun
+            ({N, {add, ChannelConf}}, ModelState) ->
+                ChannelId = channel_num_to_id(N),
+                ModelState#{ChannelId => ChannelConf};
+            ({N, del}, ModelState) ->
+                ChannelId = channel_num_to_id(N),
+                maps:remove(ChannelId, ModelState)
+        end,
+        #{},
+        Commands
+    ).
+
+channel_num_to_id(N) ->
+    <<"action:atype:", (integer_to_binary(N))/binary, ":connector:ctype:c">>.
+
+exec_channel_operation({N, {add, ChannelConf}}, ConnResId) ->
+    ChannelId = channel_num_to_id(N),
+    ok = emqx_resource_manager:add_channel_async(ConnResId, ChannelId, ChannelConf);
+exec_channel_operation({N, del}, ConnResId) ->
+    ChannelId = channel_num_to_id(N),
+    ok = emqx_resource_manager:remove_channel_async(ConnResId, ChannelId).
+
+channel_op_gen() ->
+    frequency([{2, add_channel_gen()}, {1, del}]).
+
+add_channel_gen() ->
+    ?LET(
+        HealthCheckInterval,
+        range(1, 10),
+        {add, #{resource_opts => #{health_check_interval => HealthCheckInterval}}}
+    ).
+
+resource_status_gen() ->
+    %% Stopped is a more special state, which is not entered automatically
+    oneof([
+        ?status_connected,
+        ?status_connecting,
+        ?status_disconnected
+    ]).
 
 %%------------------------------------------------------------------------------
 %% Helpers

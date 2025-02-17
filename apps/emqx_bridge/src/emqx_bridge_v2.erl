@@ -122,6 +122,9 @@
     connector_type/1
 ]).
 
+%% Internal exports
+-export([id_with_root_name/3]).
+
 %% Compatibility Layer API
 %% All public functions for the compatibility layer should be prefixed with
 %% bridge_v1_
@@ -508,7 +511,7 @@ install_bridge_v2_helper(
     ConnectorId = emqx_connector_resource:resource_id(
         connector_type(BridgeV2Type), ConnectorName
     ),
-    _ = emqx_resource_manager:add_channel(
+    _ = emqx_resource_manager:add_channel_async(
         ConnectorId,
         BridgeV2Id,
         augment_channel_config(
@@ -570,14 +573,7 @@ uninstall_bridge_v2(
             ConnectorId = emqx_connector_resource:resource_id(
                 connector_type(BridgeV2Type), ConnectorName
             ),
-            Res = emqx_resource_manager:remove_channel(ConnectorId, BridgeV2Id),
-            case Res of
-                ok ->
-                    ok = emqx_resource:clear_metrics(BridgeV2Id);
-                _ ->
-                    ok
-            end,
-            Res
+            emqx_resource_manager:remove_channel_async(ConnectorId, BridgeV2Id)
     end.
 
 combine_connector_and_bridge_v2_config(

@@ -56,8 +56,8 @@ list_ns() ->
 %% @doc List namespaces skipping the last namespace from the previous page.
 %% The second argument is the number of namespaces to return.
 -spec list_ns(tns(), non_neg_integer()) -> [tns()].
-list_ns(LastNs, Limit) ->
-    emqx_mt_state:list_ns(LastNs, Limit).
+list_ns(LastTns, Limit) ->
+    emqx_mt_state:list_ns(LastTns, Limit).
 
 %% @doc Immediately clear session records of the given node.
 %% If a node is down, the records of the node will be cleared after a delay.

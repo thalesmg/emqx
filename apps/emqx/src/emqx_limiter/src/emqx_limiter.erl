@@ -73,8 +73,10 @@
 
 -export_type([zone/0, group/0, name/0, id/0, options/0]).
 
--type zone() :: group().
--type group() :: term().
+-type zone() :: atom().
+-type group_kind() :: term().
+-type group_name() :: term().
+-type group() :: {group_kind(), group_name()}.
 -type name() :: atom().
 -type id() :: {group(), name()}.
 -type listener_id() :: term().

@@ -54,14 +54,15 @@ end_per_testcase(_TestCase, Config) ->
 %%--------------------------------------------------------------------
 
 t_try_consume_put_back(_) ->
-    ok = emqx_limiter:create_group(exclusive, group1, [
+    Group = {kind1, group1},
+    ok = emqx_limiter:create_group(exclusive, Group, [
         {limiter1, #{capacity => 2, interval => 1000, burst_capacity => 0}},
         {limiter2, #{capacity => 1, interval => 1000, burst_capacity => 0}}
     ]),
 
     Client0 = emqx_limiter_composite:new([
-        emqx_limiter:connect({group1, limiter1}),
-        emqx_limiter:connect({group1, limiter2})
+        emqx_limiter:connect({Group, limiter1}),
+        emqx_limiter:connect({Group, limiter2})
     ]),
 
     %% Try to consume 2 tokens, but the second limiter has only 1 available

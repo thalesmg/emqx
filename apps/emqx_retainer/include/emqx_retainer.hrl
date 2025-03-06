@@ -24,7 +24,7 @@
 -define(TAB_INDEX_META, emqx_retainer_index_meta).
 -define(RETAINER_SHARD, emqx_retainer_shard).
 
--define(RETAINER_LIMITER_GROUP, emqx_retainer).
+-define(RETAINER_LIMITER_GROUP, {emqx_retainer, emqx_retainer}).
 -define(DISPATCHER_LIMITER_NAME, dispatcher).
 -define(PUBLISHER_LIMITER_NAME, publisher).
 

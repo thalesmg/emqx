@@ -205,19 +205,23 @@ test_concurrent(Capacity, Interval) ->
     Deadline = erlang:monotonic_time(millisecond) + TestInterval,
 
     %% Let 10 concurrent consumers consume tokens
-    lists:foreach(
+    MRefs = lists:map(
         fun(_) ->
             Client = emqx_limiter:connect({Group, limiter1}),
-            spawn_link(fun() ->
-                Consumed = consume_till(Client, Deadline, 0),
-                Self ! {consumed, Consumed}
-            end)
+            {_Pid, MRef} = spawn_opt(
+                fun() ->
+                    Consumed = consume_till(Client, Deadline, 0),
+                    Self ! {consumed, Consumed}
+                end,
+                [link, monitor]
+            ),
+            MRef
         end,
         lists:seq(1, 10)
     ),
 
     %% Wait for the consumers to finish
-    ct:sleep(TestInterval + 100),
+    wait_down(MRefs, TestInterval),
     Consumed = count_consumed(),
     %% Initial capacity + Generated tokens
     Expected = Capacity + Capacity * TestInterval div Interval,
@@ -237,8 +241,11 @@ test_concurrent(Capacity, Interval) ->
 %% Helper functions
 %%--------------------------------------------------------------------
 
+now_ms() ->
+    erlang:monotonic_time(millisecond).
+
 consume_till(Client, Deadline, Consumed) ->
-    case erlang:monotonic_time(millisecond) >= Deadline of
+    case now_ms() >= Deadline of
         true ->
             Consumed;
         false ->
@@ -259,4 +266,25 @@ count_consumed(N) ->
             count_consumed(N + Cnt)
     after 100 ->
         N
+    end.
+
+wait_down(MRefs0, Timeout) ->
+    MRefs = maps:from_keys(MRefs0, true),
+    Deadline = now_ms() + Timeout,
+    do_wait_down(MRefs, Timeout, Deadline).
+
+do_wait_down(MRefs, _Timeout, _Deadline) when map_size(MRefs) == 0 ->
+    ok;
+do_wait_down(MRefs0, Timeout, Deadline) ->
+    case now_ms() > Deadline of
+        true ->
+            ct:fail("not all pids died! still alive: ~b", [map_size(MRefs0)]);
+        false ->
+            receive
+                {'DOWN', MRef, process, _, _} when is_map_key(MRef, MRefs0) ->
+                    MRefs = maps:remove(MRef, MRefs0),
+                    do_wait_down(MRefs, Timeout, Deadline)
+            after Timeout ->
+                ct:fail("not all pids died! still alive: ~b", [map_size(MRefs0)])
+            end
     end.

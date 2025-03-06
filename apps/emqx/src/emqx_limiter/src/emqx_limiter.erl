@@ -71,7 +71,14 @@
     config_from_rate/1
 ]).
 
--export_type([zone/0, group/0, name/0, id/0, options/0]).
+-export_type([
+    zone/0,
+    group/0,
+    group_kind/0,
+    name/0,
+    id/0,
+    options/0
+]).
 
 -type zone() :: atom().
 -type group_kind() :: term().

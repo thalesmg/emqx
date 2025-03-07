@@ -11,8 +11,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27011:27017
+    # ports:
+    #   - 27011:27017
     restart: always
     volumes:
       - ../../apps/emqx/etc/certs/cert.pem:/etc/certs/cert.pem
@@ -23,7 +23,7 @@ services:
       - |
         cat /etc/certs/key.pem /etc/certs/cert.pem >  /etc/certs/mongodb.pem
         mongod --ipv6 --bind_ip_all --tlsMode requireTLS --tlsCertificateKeyFile /etc/certs/mongodb.pem --replSet rs0
-      
+
   mongo2:
     hostname: mongo2
     container_name: mongo2
@@ -34,8 +34,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27012:27017
+    # ports:
+    #   - 27012:27017
     restart: always
     volumes:
       - ../../apps/emqx/etc/certs/cert.pem:/etc/certs/cert.pem
@@ -57,8 +57,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27013:27017
+    # ports:
+    #   - 27013:27017
     restart: always
     volumes:
       - ../../apps/emqx/etc/certs/cert.pem:/etc/certs/cert.pem
@@ -69,7 +69,7 @@ services:
       - |
         cat /etc/certs/key.pem /etc/certs/cert.pem >  /etc/certs/mongodb.pem
         mongod --ipv6 --bind_ip_all --tlsMode requireTLS --tlsCertificateKeyFile /etc/certs/mongodb.pem --replSet rs0
-      
+
   mongo_client:
     image: public.ecr.aws/docker/library/mongo:${MONGO_TAG}
     container_name: mongo_client

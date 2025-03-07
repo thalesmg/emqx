@@ -14,8 +14,8 @@ services:
       - ./certs/ca.crt:/etc/certs/ca-cert.pem
       - ./certs/server.crt:/etc/certs/server-cert.pem
       - ./certs/server.key:/etc/certs/server-key.pem
-    ports:
-      - "3307:3306"
+    # ports:
+    #   - "3307:3306"
     networks:
       - emqx_bridge
     command:
@@ -34,4 +34,3 @@ services:
       - --require-secure-transport=ON
       - --tls-version=TLSv1.2,TLSv1.3
       - --ssl-cipher=ECDHE-RSA-AES256-GCM-SHA384
-

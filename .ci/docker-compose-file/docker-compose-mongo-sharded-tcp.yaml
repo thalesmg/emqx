@@ -11,8 +11,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27014:27017
+    # ports:
+    #   - 27014:27017
     restart: always
     command:
       --configsvr
@@ -31,8 +31,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27015:27017
+    # ports:
+    #   - 27015:27017
     restart: always
     command:
       --shardsvr
@@ -51,8 +51,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27016:27017
+    # ports:
+    #   - 27016:27017
     restart: always
     entrypoint: mongos
     command:

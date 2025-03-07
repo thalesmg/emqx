@@ -11,9 +11,9 @@ services:
     expose:
       - "9100"
       - "9101"
-    ports:
-      - "9100:9100"
-      - "9101:9101"
+    # ports:
+    #   - "9100:9100"
+    #   - "9101:9101"
     healthcheck:
       test: ["CMD", "curl", "-k", "-f", "https://localhost:9100/minio/health/live"]
       interval: 30s

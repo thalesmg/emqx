@@ -15,8 +15,8 @@ services:
       POSTGRES_DB: mqtt
       POSTGRES_USER: root
       POSTGRES_PASSWORD: public
-    ports:
-      - "5433:5432"
+    # ports:
+    #   - "5433:5432"
     command:
       - -c
       - ssl=on

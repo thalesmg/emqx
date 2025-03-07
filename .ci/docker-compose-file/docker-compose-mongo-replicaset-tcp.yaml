@@ -11,8 +11,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27011:27017
+    # ports:
+    #   - 27011:27017
     restart: always
     command:
       --ipv6
@@ -29,8 +29,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27012:27017
+    # ports:
+    #   - 27012:27017
     restart: always
     command:
       --ipv6
@@ -47,8 +47,8 @@ services:
       - emqx_bridge
     expose:
       - 27017
-    ports:
-      - 27013:27017
+    # ports:
+    #   - 27013:27017
     restart: always
     command:
       --ipv6

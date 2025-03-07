@@ -13,8 +13,8 @@ services:
       - ./certs/ca.crt:/etc/certs/cacert.pem
     networks:
       - emqx_bridge
-    ports:
-      - "27018:27017"
+    # ports:
+    #   - "27018:27017"
     command:
       - /bin/bash
       - -c
@@ -27,4 +27,3 @@ services:
           --tlsCAFile /etc/certs/cacert.pem \
           --tlsDisabledProtocols TLS1_0,TLS1_1 \
           --setParameter opensslCipherConfig='HIGH:!EXPORT:!aNULL:!DHE:!kDHE@STRENGTH'
-

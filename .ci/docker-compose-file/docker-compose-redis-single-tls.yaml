@@ -9,8 +9,8 @@ services:
       - ./certs/server.key:/etc/certs/redis.key
       - ./certs/ca.crt:/etc/certs/ca.crt
       - ./redis/single-tls:/usr/local/etc/redis
-    ports:
-      - "6380:6380"
+    # ports:
+    #   - "6380:6380"
     command: redis-server /usr/local/etc/redis/redis.conf
     restart: always
     networks:

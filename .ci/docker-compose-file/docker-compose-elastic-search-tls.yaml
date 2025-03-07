@@ -43,8 +43,8 @@ services:
     volumes:
       - ./elastic:/usr/share/elasticsearch/config/certs
       - esdata01:/usr/share/elasticsearch/data
-    ports:
-      - 9200:9200
+    # ports:
+    #   - 9200:9200
     environment:
       - node.name=es01
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
@@ -82,8 +82,8 @@ services:
     volumes:
       - ./elastic:/usr/share/kibana/config/certs
       - kibanadata:/usr/share/kibana/data
-    ports:
-      - 5601:5601
+    # ports:
+    #   - 5601:5601
     environment:
       - SERVERNAME=kibana
       - ELASTICSEARCH_HOSTS=https://es01:9200

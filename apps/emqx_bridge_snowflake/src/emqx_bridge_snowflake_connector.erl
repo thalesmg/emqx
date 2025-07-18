@@ -1479,6 +1479,7 @@ get_login_failure_details(ODBCPool, RequestId) ->
         )
     catch
         K:E:Stacktrace ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{kes => {K,E}}]),
             {error, #{kind => K, reason => E, stacktrace => Stacktrace}}
     end.
 

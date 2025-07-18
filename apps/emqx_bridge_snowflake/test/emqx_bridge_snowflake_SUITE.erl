@@ -728,6 +728,18 @@ create_connector_api(Config, Overrides) ->
         emqx_bridge_v2_testlib:create_connector_api(Config, Overrides)
     ).
 
+get_connector_api(TCConfig) ->
+    Type = emqx_bridge_v2_testlib:get_value(connector_type, TCConfig),
+    Name = emqx_bridge_v2_testlib:get_value(connector_name, TCConfig),
+    emqx_bridge_v2_testlib:simplify_result(
+        emqx_bridge_v2_testlib:get_connector_api(Type, Name)
+    ).
+
+create_action_api(Config, Overrides) ->
+    emqx_bridge_v2_testlib:simplify_result(
+        emqx_bridge_v2_testlib:create_action_api(Config, Overrides)
+    ).
+
 %%------------------------------------------------------------------------------
 %% Test cases
 %%------------------------------------------------------------------------------
@@ -1510,6 +1522,66 @@ t_optional_username(Config) ->
     ?assertMatch(
         {201, #{<<"status">> := <<"connected">>}},
         create_connector_api(Config, #{})
+    ),
+    ok.
+
+-doc """
+Checks that timeouts when calling ODBC to try and get login failures don't kill the ecpool
+worker.
+""".
+t_get_login_failure_details_timeout(init, Config) when is_list(Config) ->
+    t_get_login_failure_details_timeout(init, maps:from_list(Config));
+t_get_login_failure_details_timeout(init, #{mock := true} = Config) ->
+    meck:expect(?CONN_MOD, do_insert_report_request, fun(_HTTPPool, _Req, _RequestTTL, _MaxRetries) ->
+        InsertReportResponse = #{
+            <<"code">> => <<"390144">>,
+            <<"data">> => null,
+            <<"headers">> => null,
+            <<"message">> => <<"JWT token is invalid. [92d86b2e-d652-4d2d-9780-a6ed28b38356]">>,
+            <<"success">> => false
+        },
+        Headers = [],
+        Body = emqx_utils_json:encode(InsertReportResponse),
+        {ok, 401, Headers, Body}
+    end),
+    ok = meck:new(odbc, [passthrough, no_history]),
+    meck:expect(?CONN_MOD, do_get_streaming_hostname, fun(HTTPPool, Req, RequestTTL, MaxRetries) ->
+        meck:passthrough([HTTPPool, Req, RequestTTL, MaxRetries])
+    end),
+    TestPid = self(),
+    meck:expect(odbc, sql_query, fun(ConnPid, SQL, Timeout) ->
+        case Timeout of
+            infinity ->
+                meck:passthrough([ConnPid, SQL, Timeout]);
+            _FiniteTimeout ->
+                ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{me => self(), cpid => ConnPid, sql => SQL}]),
+                TestPid ! {worker_pid, self()},
+                exit(timeout)
+        end
+    end),
+    maps:to_list(Config);
+t_get_login_failure_details_timeout(init, #{mock := false}) ->
+    {skip, run_with_mock};
+t_get_login_failure_details_timeout('end', _Config) ->
+    meck:unload(),
+    ok.
+t_get_login_failure_details_timeout(Config) ->
+    {201, #{<<"status">> := <<"connected">>}} = create_connector_api(Config, #{}),
+    ?assertMatch(
+        {201, #{<<"status">> := <<"disconnected">>}},
+        create_action_api(Config, #{})
+    ),
+    receive
+        {worker_pid, WorkerPid} ->
+            ?assert(is_process_alive(WorkerPid))
+    after
+        1_000 ->
+            ct:fail("should've triggered get details call")
+    end,
+    %% Connector shouldn't have become disconnected
+    ?assertMatch(
+        {200, #{<<"status">> := <<"connected">>}},
+        get_connector_api(Config)
     ),
     ok.
 

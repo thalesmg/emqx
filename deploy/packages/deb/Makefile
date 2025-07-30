@@ -13,7 +13,7 @@ TARGET_PKG  := $(EMQX_NAME)-$(shell $(EMQX_REL)/pkg-vsn.sh $(EMQX_NAME) --long)
 .PHONY: all
 all: | $(BUILT)
 	cp -r debian $(SRCDIR)/
-	cp emqx.service $(SRCDIR)/debian/${EMQX_NAME}.service
+	cp emqx.service $(SRCDIR)/debian/emqx.service
 	sed -i "s#<DATETIME>#$(shell date -u '+%a, %d %b %Y %T %z')#g" $(SRCDIR)/debian/changelog
 	sed -i "s#<VERSION>#$(PKG_VSN)#g" $(SRCDIR)/debian/changelog
 	sed -i "s/emqx-pkg/$(EMQX_NAME)-pkg/g" $(SRCDIR)/debian/rules; \

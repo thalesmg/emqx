@@ -33,6 +33,7 @@ defmodule EMQXBridgeHTTP.MixProject do
     [
       {:emqx, in_umbrella: true},
       {:emqx_resource, in_umbrella: true},
+      {:emqx_gen_bridge, in_umbrella: true},
       UMP.common_dep(:ehttpc)
     ]
   end

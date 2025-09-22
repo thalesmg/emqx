@@ -103,7 +103,9 @@
 
 -define(NEG_QOS_CLIENT_ID, <<"NegQoS-Client">>).
 
--define(REGISTER_INFLIGHT(TopicId, TopicName), #channel{register_inflight = {TopicId, _, TopicName}}).
+-define(REGISTER_INFLIGHT(TOPICID, TOPICNAME, POSTPONED), #channel{
+    register_inflight = {TOPICID, _, TOPICNAME, POSTPONED}
+}).
 
 -define(MAX_RETRY_TIMES, 3).
 
@@ -659,7 +661,7 @@ handle_in(
     end;
 handle_in(
     ?SN_REGACK_MSG(TopicId, _MsgId, ?SN_RC_ACCEPTED),
-    Channel = ?REGISTER_INFLIGHT(TopicId, TopicName)
+    Channel = ?REGISTER_INFLIGHT(TopicId, TopicName, PostponedPublishes)
 ) ->
     ?SLOG(debug, #{
         msg => "register_topic_name_to_client_succesfully",
@@ -670,10 +672,10 @@ handle_in(
         retry_register,
         Channel#channel{register_inflight = undefined}
     ),
-    send_next_register_or_replay_publish(TopicName, NChannel);
+    send_next_register_or_replay_publish(TopicName, PostponedPublishes, NChannel);
 handle_in(
     ?SN_REGACK_MSG(TopicId, _MsgId, Reason),
-    Channel = ?REGISTER_INFLIGHT(TopicId, TopicName)
+    Channel = ?REGISTER_INFLIGHT(TopicId, TopicName, PostponedPublishes)
 ) ->
     case Reason of
         ?SN_RC_CONGESTION ->
@@ -693,7 +695,7 @@ handle_in(
                 retry_register,
                 Channel#channel{register_inflight = undefined}
             ),
-            send_next_register_or_replay_publish(TopicName, NChannel)
+            send_next_register_or_replay_publish(TopicName, PostponedPublishes, NChannel)
     end;
 handle_in(
     ?SN_REGACK_MSG(TopicId, MsgId, Reason),
@@ -792,7 +794,7 @@ handle_in(
                     %% involving the predefined topic name in register to
                     %% enhance the gateway's robustness even inconsistent
                     %% with MQTT-SN channels
-                    handle_out(register, {TopicId, TopicName}, Channel)
+                    handle_out(register, {TopicId, TopicName, _PostponedPublishes = []}, Channel)
             end;
         _ ->
             ?SLOG(error, #{
@@ -1026,19 +1028,42 @@ outgoing_and_update(Pkt) ->
 
 send_next_register_or_replay_publish(
     _TopicName,
-    Channel = #channel{register_awaiting_queue = []}
+    PostponedPublishes,
+    Channel0 = #channel{register_awaiting_queue = []}
 ) ->
-    {Outgoing, NChannel} = resume_or_replay_messages(Channel),
-    {ok, Outgoing, NChannel};
+    {Outgoing0, Channel1} = resume_or_replay_messages(Channel0),
+    {Outgoing1, Channel} = postponed_messages_to_packets(PostponedPublishes, Channel1),
+    {ok, lists:append(Outgoing0, [{outgoing, Outgoing1}]), Channel};
 send_next_register_or_replay_publish(
     _TopicName,
-    Channel = #channel{register_awaiting_queue = RAQueue}
+    PostponedPublishes,
+    Channel0 = #channel{register_awaiting_queue = RAQueue}
 ) ->
     [RegisterReq | NRAQueue] = RAQueue,
-    handle_out(
+    Channel1 = Channel0#channel{register_awaiting_queue = NRAQueue},
+    {Outgoing0, Channel2} = postponed_messages_to_packets(PostponedPublishes, Channel1),
+    Res = handle_out(
         register,
         RegisterReq,
-        Channel#channel{register_awaiting_queue = NRAQueue}
+        Channel2
+    ),
+    case Res of
+        {ok, Channel} ->
+            {ok, [{outgoing, Outgoing0}], Channel};
+        {ok, Outgoing1, Channel} ->
+            {ok, lists:append([{outgoing, Outgoing0}], Outgoing1), Channel}
+    end.
+
+postponed_messages_to_packets(PostponedPublishes, Channel0) ->
+    lists:mapfoldl(
+        fun(Message, ChanAcc0) ->
+            #channel{session = Session0} = ChanAcc0,
+            {MsgId, Session} = emqx_mqttsn_session:obtain_next_pkt_id(Session0),
+            ChanAcc = ChanAcc0#channel{session = Session},
+            {message_to_packet(MsgId, Message, ChanAcc), ChanAcc}
+        end,
+        Channel0,
+        PostponedPublishes
     ).
 
 %%--------------------------------------------------------------------
@@ -1540,7 +1565,7 @@ handle_out(pubcomp, MsgId, Channel) ->
     {ok, {outgoing, ?SN_PUBREC_MSG(?SN_PUBCOMP, MsgId)}, Channel};
 handle_out(
     register,
-    {TopicId, TopicName},
+    {TopicId, TopicName, PostponedPublishes},
     Channel = #channel{
         session = Session,
         register_inflight = undefined
@@ -1550,18 +1575,18 @@ handle_out(
     Outgoing = {outgoing, ?SN_REGISTER_MSG(TopicId, MsgId, TopicName)},
     NChannel = Channel#channel{
         session = NSession,
-        register_inflight = {TopicId, MsgId, TopicName}
+        register_inflight = {TopicId, MsgId, TopicName, PostponedPublishes}
     },
     {ok, Outgoing, ensure_register_timer(NChannel)};
 handle_out(
     register,
-    {TopicId, TopicName},
+    {TopicId, TopicName, PostponedPublishes},
     Channel = #channel{
         register_inflight = Inflight,
         register_awaiting_queue = RAQueue
     }
 ) ->
-    case enqueue_register_request({TopicId, TopicName}, Inflight, RAQueue) of
+    case enqueue_register_request({TopicId, TopicName, PostponedPublishes}, Inflight, RAQueue) of
         ignore ->
             ?SLOG(debug, #{
                 msg => "ingore_register_request_to_client",
@@ -1572,7 +1597,17 @@ handle_out(
                     }
             }),
             {ok, Channel};
-        NRAQueue ->
+        {inflight, NInflight} ->
+            ?SLOG(debug, #{
+                msg => "update_inflight_postponed",
+                register_request =>
+                    #{
+                        topic_id => TopicId,
+                        topic_name => TopicName
+                    }
+            }),
+            {ok, Channel#channel{register_inflight = NInflight}};
+        {queue, NRAQueue} ->
             ?SLOG(debug, #{
                 msg => "put_register_msg_into_awaiting_queue",
                 register_request =>
@@ -1593,13 +1628,32 @@ handle_out(disconnect, RC, Channel) ->
         end,
     {ok, [{outgoing, DisPkt}, {close, Reason}], Channel}.
 
-enqueue_register_request({_, TopicName}, {_, _, TopicName}, _RAQueue) ->
+enqueue_register_request({_, TopicName, _PostponedPublishes = []}, {_, _, TopicName, _}, _RAQueue) ->
     ignore;
-enqueue_register_request({TopicId, TopicName}, _, RAQueue) ->
-    HasQueued = lists:any(fun({_, T}) -> T == TopicName end, RAQueue),
+enqueue_register_request(
+    {_, TopicName, PostponedPublishes}, {TopId, MsgId, TopicName, Postponed0}, _RAQueue
+) ->
+    NInflight = {TopId, MsgId, TopicName, Postponed0 ++ PostponedPublishes},
+    {inflight, NInflight};
+enqueue_register_request({TopicId, TopicName, PostponedPublishes}, _, RAQueue) ->
+    HasQueued = lists:any(fun({_, T, _}) -> T == TopicName end, RAQueue),
     case HasQueued of
-        true -> ignore;
-        false -> RAQueue ++ [{TopicId, TopicName}]
+        true when PostponedPublishes == [] ->
+            ignore;
+        true ->
+            NRAQueue = lists:map(
+                fun
+                    ({TopId, TopName, Postponed0}) when TopName == TopicName ->
+                        {TopId, TopName, Postponed0 ++ PostponedPublishes};
+                    (Entry) ->
+                        Entry
+                end,
+                RAQueue
+            ),
+            {queue, NRAQueue};
+        false ->
+            NRAQueue = RAQueue ++ [{TopicId, TopicName, PostponedPublishes}],
+            {queue, NRAQueue}
     end.
 
 %%--------------------------------------------------------------------
@@ -1626,7 +1680,7 @@ maybe_resume_session(
     case subs_resume() andalso map_size(Subs) =/= 0 of
         true ->
             TopicNames = lists:filter(fun(T) -> not emqx_topic:wildcard(T) end, maps:keys(Subs)),
-            Registers = lists:map(fun(T) -> {register, T} end, TopicNames),
+            Registers = lists:map(fun(T) -> {register, T, []} end, TopicNames),
             {Registers, Channel};
         false ->
             resume_or_replay_messages(Channel)
@@ -1706,7 +1760,7 @@ outgoing_deliver_and_register({Packets, Channel}) ->
         lists:foldl(
             fun(P, {Acc0, Acc1}) ->
                 case P of
-                    {register, _} ->
+                    {register, _, _} ->
                         {Acc0, [P | Acc1]};
                     _ ->
                         {[P | Acc0], Acc1}
@@ -1742,7 +1796,7 @@ message_to_packet(
             Flags = #mqtt_sn_flags{qos = QoS, topic_id_type = ?SN_SHORT_TOPIC},
             ?SN_PUBLISH_MSG(Flags, Topic, NMsgId, Payload);
         undefined ->
-            {register, Topic}
+            {register, Topic, [Message]}
     end.
 
 %%--------------------------------------------------------------------
@@ -1864,7 +1918,9 @@ handle_info(clean_authz_cache, Channel) ->
     {ok, Channel};
 handle_info({subscribe, _}, Channel) ->
     {ok, Channel};
-handle_info({register, TopicName}, Channel = #channel{session = Session}) ->
+handle_info({register, TopicName}, Channel) ->
+    handle_info({register, TopicName, _PostponedPublishes = []}, Channel);
+handle_info({register, TopicName, PostponedPublishes}, Channel = #channel{session = Session}) ->
     Registry = emqx_mqttsn_session:registry(Session),
     case emqx_mqttsn_registry:reg(TopicName, Registry) of
         {error, Reason} ->
@@ -1876,7 +1932,9 @@ handle_info({register, TopicName}, Channel = #channel{session = Session}) ->
             {ok, Channel};
         {ok, TopicId, NRegistry} ->
             NSession = emqx_mqttsn_session:set_registry(NRegistry, Session),
-            handle_out(register, {TopicId, TopicName}, Channel#channel{session = NSession})
+            handle_out(register, {TopicId, TopicName, PostponedPublishes}, Channel#channel{
+                session = NSession
+            })
     end;
 handle_info(Info, Channel) ->
     ?SLOG(error, #{

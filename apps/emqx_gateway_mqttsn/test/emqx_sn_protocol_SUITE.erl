@@ -650,6 +650,58 @@ t_subscribe_predefined_topic(_) ->
     update_mqttsn_with_predefined_topics(?DEFAULT_PREDEFINED_TOPICS),
     gen_udp:close(Socket1).
 
+%% Verifies the following scenario:
+%% 1) An MQTT-SN client connects and subscribes to a wildcard topic.
+%% 2) A different, potentially non-MQTT-SN client publishes a message that matches the
+%%    wildcard topic.
+%% 3) Since the topic has no topic id yet, the MQTT-SN receives the `REGISTER` packet for
+%%    the new topic id.
+%% 4) After the MQTT-SN client replies with `REGACK`, it receives the original `PUBLISH`
+%%    that triggered all this.
+%% See: https://github.com/emqx/emqx/issues/15982
+t_subscribe_wildcard_then_receive_publish(_) ->
+    Dup = 0,
+    QoS = 0,
+    Retain = 0,
+    Will = 0,
+    CleanSession = 0,
+    MsgId = 1,
+    TopicId = 0,
+    ReturnCode = 0,
+    {ok, Socket} = gen_udp:open(0, [binary]),
+
+    ClientId = ?CLIENTID,
+    send_connect_msg(Socket, ClientId),
+    ?assertEqual(<<3, ?SN_CONNACK, 0>>, receive_response(Socket)),
+
+    send_subscribe_msg_normal_topic(Socket, QoS, <<"mqttsn/test/sub/wildcard_hash/#">>, MsgId),
+    ?assertEqual(
+        <<8, ?SN_SUBACK, Dup:1, QoS:2, Retain:1, Will:1, CleanSession:1, ?SN_NORMAL_TOPIC:2,
+            TopicId:16, MsgId:16, ReturnCode>>,
+        receive_response(Socket)
+    ),
+
+    {ok, C} = emqtt:start_link(),
+    {ok, _} = emqtt:connect(C),
+    Topic = <<"mqttsn/test/sub/wildcard_hash/0">>,
+    Payload = <<"test1">>,
+    ok = emqtt:publish(C, Topic, Payload),
+    emqtt:stop(C),
+
+    <<_, ?SN_REGISTER, TopicIdA:16, RegMsgIdA:16, Topic/binary>> = receive_response(Socket),
+    send_regack_msg(Socket, TopicIdA, RegMsgIdA),
+
+    ct:pal("topicid: ~p", [TopicIdA]),
+    ?assertMatch(
+        <<12, ?SN_PUBLISH, _Dup:1, _QoS:2, _Retain:1, _Will:1, _CleanSession:1, ?SN_NORMAL_TOPIC:2,
+            TopicIdA:16, _MsgId:16, Payload/binary>>,
+        receive_response(Socket)
+    ),
+
+    send_disconnect_msg(Socket, undefined),
+    ?assertEqual(<<2, ?SN_DISCONNECT>>, receive_response(Socket)),
+    gen_udp:close(Socket).
+
 t_publish_negqos_enabled(_) ->
     Dup = 0,
     QoS = 0,

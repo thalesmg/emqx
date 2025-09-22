@@ -701,6 +701,7 @@ handle_info(
     {_NewStreams, S, SchedS} = emqx_persistent_session_ds_stream_scheduler:on_new_stream_event(
         Ref, S0, SchedS0
     ),
+    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{new => _NewStreams}]),
     Session#{s := S, stream_scheduler_s := SchedS};
 handle_info(#req_sync{from = From, ref = Ref}, Session0, _ClientInfo) ->
     Session = commit(Session0, #{lifetime => up, sync => true}),
@@ -1107,12 +1108,14 @@ handle_ds_reply(
 ) ->
     case emqx_persistent_session_ds_stream_scheduler:verify_reply(Reply, S, SchedS0) of
         {true, StreamKey, SchedS} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{sk => StreamKey, reply => Reply}]),
             SRS0 = emqx_persistent_session_ds_state:get_stream(StreamKey, S),
             case
                 emqx_persistent_session_ds_stream_scheduler:is_fully_acked(SRS0, S) and
                     not ?IS_REPLAY_ONGOING(Replay)
             of
                 true ->
+                    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{reply => Reply, is_fully_acked => emqx_persistent_session_ds_stream_scheduler:is_fully_acked(SRS0, S), not_is_replay_ongoing => not ?IS_REPLAY_ONGOING(Replay)}]),
                     ?tp(?sessds_poll_reply, #{reply => Reply, blocked => false}),
                     %% This stream is not blocked. Add messages
                     %% directly to the inflight and set drain timer.
@@ -1132,6 +1135,7 @@ handle_ds_reply(
                         schedule_delivery(Session)
                     );
                 false ->
+                    ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{reply => Reply, is_fully_acked => emqx_persistent_session_ds_stream_scheduler:is_fully_acked(SRS0, S), not_is_replay_ongoing => not ?IS_REPLAY_ONGOING(Replay)}]),
                     ?tp(?sessds_poll_reply, #{reply => Reply, blocked => true}),
                     %% This stream is blocked, add batch to the buffer
                     %% instead:
@@ -1139,9 +1143,11 @@ handle_ds_reply(
                     Session0#{buffer := Buf, stream_scheduler_s := SchedS}
             end;
         {false, _, SchedS} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{reply => Reply}]),
             %% Unexpected reply, no action needed:
             Session0#{stream_scheduler_s := SchedS};
         {drop_buffer, StreamKey, SchedS} ->
+            ct:pal("~p>>>>>>>>>\n  ~p",[{node(),?MODULE,?LINE,self()},#{reply => Reply}]),
             %% Scheduler detected inconsistency and requested to drop
             %% the stream buffer:
             Buf = emqx_persistent_session_ds_buffer:drop_stream(StreamKey, Buf0),
@@ -1406,7 +1412,9 @@ do_drain_buffer_of_stream(
 create_session(Lifetime, ClientID, S0, ClientInfo, ConnInfo, MaybeWillMsg, Conf) ->
     SchedS = emqx_persistent_session_ds_stream_scheduler:new(),
     Buffer = emqx_persistent_session_ds_buffer:new(),
-    Inflight = emqx_persistent_session_ds_inflight:new(receive_maximum(ConnInfo)),
+    RM = receive_maximum(ConnInfo),
+    ct:pal("~p>>>>>>>>>\n  ~p", [{node(), ?MODULE, ?LINE, self()}, #{rm => RM}]),
+    Inflight = emqx_persistent_session_ds_inflight:new(RM),
     %% Create or init shared subscription state:
     case Lifetime of
         new ->

@@ -30,7 +30,8 @@
 %%------------------------------------------------------------------------------
 
 all() ->
-    emqx_common_test_helpers:all(?MODULE).
+    %% emqx_common_test_helpers:all(?MODULE).
+    [{testcase, t_crashed_node_session_gc, [{repeat_until_fail, 1_000}]}].
 
 init_per_suite(Config) ->
     case emqx_common_test_helpers:is_standalone_test() of

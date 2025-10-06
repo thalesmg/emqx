@@ -32,6 +32,8 @@ start(_Type, _Args) ->
     ok = emqx_limiter:init(),
     ok = maybe_start_listeners(),
     emqx_config:add_handlers(),
+    ok = emqx_sub_topic_tree_index:create_tables(),
+    ok = emqx_sub_topic_tree_index:register_hooks(),
     register(emqx, self()),
     {ok, Sup}.
 
@@ -39,7 +41,9 @@ prep_stop(_State) ->
     ok = emqx_alarm_handler:unload(),
     emqx_config:remove_handlers(),
     emqx_boot:is_enabled(listeners) andalso
-        emqx_listeners:stop().
+        emqx_listeners:stop(),
+    ok = emqx_sub_topic_tree_index:unregister_hooks(),
+    ok.
 
 stop(_State) ->
     ok.

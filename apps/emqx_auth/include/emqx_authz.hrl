@@ -8,7 +8,11 @@
 -include_lib("emqx/include/emqx_placeholder.hrl").
 
 %% authz_mnesia
--define(ACL_TABLE, emqx_acl).
+
+%% Deprecated (since 6.1.0)
+-define(ACL_TABLE1, emqx_acl).
+%% Introduced in 6.1.0
+-define(ACL_TABLE, emqx_acl2).
 
 %% authz_cmd
 -define(CMD_REPLACE, replace).

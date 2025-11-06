@@ -9,6 +9,7 @@
 
 -include_lib("emqx_auth/include/emqx_authz.hrl").
 -include_lib("emqx/include/emqx_config.hrl").
+-include_lib("emqx/include/emqx.hrl").
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -41,7 +42,8 @@ init_per_testcase(_TestCase, Config) ->
     Config.
 
 end_per_testcase(_TestCase, _Config) ->
-    ok = emqx_authz_mnesia:purge_rules().
+    ok = emqx_authz_mnesia:purge_rules(?global_ns),
+    ok.
 
 %%------------------------------------------------------------------------------
 %% Testcases
@@ -52,6 +54,7 @@ t_authz(_Config) ->
 
     test_authz(
         allow,
+        ?global_ns,
         {all, #{
             <<"permission">> => <<"allow">>, <<"action">> => <<"subscribe">>, <<"topic">> => <<"t">>
         }},
@@ -59,6 +62,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {{username, <<"username">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -68,6 +72,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {{username, <<"username">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -77,6 +82,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {{username, <<"username">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -86,6 +92,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {{clientid, <<"clientid">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -95,6 +102,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {{clientid, <<"clientid">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -105,6 +113,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {{clientid, <<"clientid">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -115,6 +124,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {{clientid, <<"clientid">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -127,6 +137,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {{clientid, <<"clientid">>}, #{
             <<"permission">> => <<"allow">>,
             <<"action">> => <<"subscribe">>,
@@ -137,6 +148,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -151,6 +163,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -165,6 +178,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -179,6 +193,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -192,6 +207,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -205,6 +221,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -218,6 +235,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -231,6 +249,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -244,6 +263,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -257,6 +277,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         allow,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -270,6 +291,7 @@ t_authz(_Config) ->
     ),
     test_authz(
         deny,
+        ?global_ns,
         {
             {clientid, <<"clientid">>},
             #{
@@ -281,23 +303,65 @@ t_authz(_Config) ->
         },
         {ClientInfo#{listener => 'ws:default'}, ?AUTHZ_PUBLISH, <<"t">>}
     ),
+    test_authz(
+        deny,
+        <<"some_ns">>,
+        {all, #{
+            <<"permission">> => <<"allow">>, <<"action">> => <<"subscribe">>, <<"topic">> => <<"t">>
+        }},
+        {ClientInfo, ?AUTHZ_SUBSCRIBE, <<"t">>}
+    ),
+    test_authz(
+        deny,
+        <<"some_ns">>,
+        {all, #{
+            <<"permission">> => <<"allow">>, <<"action">> => <<"publish">>, <<"topic">> => <<"t">>
+        }},
+        {ClientInfo, ?AUTHZ_PUBLISH, <<"t">>}
+    ),
+    test_authz(
+        allow,
+        <<"some_ns">>,
+        {all, #{
+            <<"permission">> => <<"allow">>, <<"action">> => <<"subscribe">>, <<"topic">> => <<"t">>
+        }},
+        {
+            ClientInfo#{client_attrs => #{?CLIENT_ATTR_NAME_TNS => <<"some_ns">>}},
+            ?AUTHZ_SUBSCRIBE,
+            <<"t">>
+        }
+    ),
+    test_authz(
+        deny,
+        <<"some_ns">>,
+        {all, #{
+            <<"permission">> => <<"allow">>, <<"action">> => <<"subscribe">>, <<"topic">> => <<"t">>
+        }},
+        {
+            ClientInfo#{client_attrs => #{?CLIENT_ATTR_NAME_TNS => <<"some_other_ns">>}},
+            ?AUTHZ_SUBSCRIBE,
+            <<"t">>
+        }
+    ),
     ok.
 
-test_authz(Expected, {Who, Rule}, {ClientInfo, Action, Topic}) ->
-    ct:pal("Test authz~nwho:~p~nrule:~p~nattempt:~p~nexpected ~p", [
-        Who, Rule, {ClientInfo, Action, Topic}, Expected
+test_authz(Expected, Namespace, {Who, Rule}, {ClientInfo, Action, Topic}) ->
+    ct:pal("Test authz~nns: ~p~nwho: ~p~nrule: ~p~nattempt: ~p~nexpected: ~p", [
+        Namespace, Who, Rule, {ClientInfo, Action, Topic}, Expected
     ]),
     try
-        ok = emqx_authz_mnesia:store_rules(Who, [Rule]),
+        ok = emqx_authz_mnesia:store_rules(Namespace, Who, [Rule]),
         ?assertEqual(Expected, emqx_access_control:authorize(ClientInfo, Action, Topic))
     after
-        ok = emqx_authz_mnesia:purge_rules()
+        ok = emqx_authz_mnesia:purge_rules(Namespace)
     end.
 
 t_normalize_rules(_Config) ->
     ClientInfo = emqx_authz_test_lib:base_client_info(),
+    Namespace = ?global_ns,
 
     ok = emqx_authz_mnesia:store_rules(
+        Namespace,
         {username, <<"username">>},
         [#{<<"permission">> => <<"allow">>, <<"action">> => <<"publish">>, <<"topic">> => <<"t">>}]
     ),
@@ -311,6 +375,7 @@ t_normalize_rules(_Config) ->
         error,
         #{reason := invalid_rule},
         emqx_authz_mnesia:store_rules(
+            Namespace,
             {username, <<"username">>},
             [[<<"allow">>, <<"publish">>, <<"t">>]]
         )
@@ -320,6 +385,7 @@ t_normalize_rules(_Config) ->
         error,
         #{reason := invalid_action},
         emqx_authz_mnesia:store_rules(
+            Namespace,
             {username, <<"username">>},
             [
                 #{
@@ -335,6 +401,7 @@ t_normalize_rules(_Config) ->
         error,
         #{reason := invalid_permission},
         emqx_authz_mnesia:store_rules(
+            Namespace,
             {username, <<"username">>},
             [
                 #{
@@ -350,8 +417,8 @@ t_legacy_rules(_Config) ->
     ClientInfo = emqx_authz_test_lib:base_client_info(),
 
     ok = emqx_authz_mnesia:do_store_rules(
-        %% {?ACL_TABLE_USERNAME, <<"username">>}
-        {1, <<"username">>},
+        %% {Ns, {?ACL_TABLE_USERNAME, <<"username">>}}
+        {?global_ns, {1, <<"username">>}},
         [
             %% Legacy 3-tuple format without `who' field
             {allow, {publish, [{qos, [0, 1, 2]}, {retain, all}]}, <<"t">>}
@@ -367,6 +434,7 @@ t_destroy(_Config) ->
     ClientInfo = emqx_authz_test_lib:base_client_info(),
 
     ok = emqx_authz_mnesia:store_rules(
+        ?global_ns,
         {username, <<"username">>},
         [#{<<"permission">> => <<"allow">>, <<"action">> => <<"publish">>, <<"topic">> => <<"t">>}]
     ),
@@ -396,6 +464,7 @@ t_conf_cli_load(_Config) ->
     ClientInfo = emqx_authz_test_lib:base_client_info(),
 
     ok = emqx_authz_mnesia:store_rules(
+        ?global_ns,
         {username, <<"username">>},
         [#{<<"permission">> => <<"allow">>, <<"action">> => <<"publish">>, <<"topic">> => <<"t">>}]
     ),

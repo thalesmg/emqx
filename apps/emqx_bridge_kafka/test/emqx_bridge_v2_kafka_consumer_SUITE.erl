@@ -543,17 +543,26 @@ t_repeated_topics(Config) ->
     ),
     ok.
 
+with_meck(Module, Function, MockFn, DoFn) ->
+    meck:new(Module, [passthrough, no_history]),
+    meck:expect(Module, Function, MockFn),
+    try
+        DoFn()
+    after
+        meck:unload(Module)
+    end.
+
 %% Verifies that we return an error containing information to debug connection issues when
 %% one of the partition leaders is unreachable.
 t_pretty_api_dry_run_reason(Config) ->
-    ProxyHost = ?config(proxy_host, Config),
-    ProxyPort = ?config(proxy_port, Config),
-    ProxyName = "kafka_2_plain",
+    emqx_logger:set_level(info),
     ?check_trace(
         begin
-            {ok, {{_, 201, _}, _, _}} =
-                emqx_bridge_v2_testlib:create_bridge_api(Config),
-            emqx_common_test_helpers:with_failure(down, ProxyName, ProxyHost, ProxyPort, fun() ->
+            {ok, {{_, 201, _}, _, _}} = emqx_bridge_v2_testlib:create_bridge_api(Config),
+            %% wait for partition assignments
+            timer:sleep(5000),
+            FailFn = fun(_KafkaClientId, _KafkaTopic, _Partition) -> {error, "erro-injection"} end,
+            with_meck(brod_client, get_leader_connection, FailFn, fun() ->
                 Res = probe_source_api(
                     Config,
                     #{<<"parameters">> => #{<<"topic">> => <<"test-topic-three-partitions">>}}
@@ -564,7 +573,10 @@ t_pretty_api_dry_run_reason(Config) ->
                     match ==
                         re:run(
                             Msg,
-                            <<"client=.+; topic=.+; partition=.+; disconnected=.+; total=.+">>,
+                            <<
+                                "Partition leader unreachable; "
+                                "client=.+; topic=.+; partition=.+; disconnected=.+; total=.+"
+                            >>,
                             [{capture, none}]
                         ),
                 %% In CI, if this tests runs soon enough, Kafka may not be stable yet, and

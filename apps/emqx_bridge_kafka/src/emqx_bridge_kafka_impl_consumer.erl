@@ -578,29 +578,22 @@ do_get_status(_ClientID, _KafkaTopics = [], _SubscriberId) ->
     ?status_connected | {?status_disconnected | ?status_connecting, _Msg :: binary()}.
 do_get_topic_status(ClientID, KafkaTopic, SubscriberId) ->
     case get_consumer_workers(KafkaTopic, SubscriberId) of
-        {AliveWorkers, []} ->
-            DisconnectedLeaders =
-                lists:filter(
-                    fun({Partition, _WorkerPid}) ->
-                        case brod_client:get_leader_connection(ClientID, KafkaTopic, Partition) of
-                            {ok, _Conn} ->
-                                false;
-                            {error, Reason} ->
-                                {true, {Partition, Reason}}
-                        end
-                    end,
-                    AliveWorkers
-                ),
-            case DisconnectedLeaders of
-                [] ->
-                    ?status_connected;
-                [{P, R} | _] ->
+        {_AliveWorkers = [], []} ->
+            %% Didn't have enough time to receive partition assignments?
+            case brod_client:get_partitions_count(ClientID, KafkaTopic) of
+                {ok, NumPartitions} ->
+                    Partitions = lists:seq(0, NumPartitions - 1),
+                    do_check_leader_connections(ClientID, KafkaTopic, Partitions);
+                {error, Reason} ->
                     Msg = io_lib:format(
-                        "Partition leader unavailable; client=~s; topic=~s; partition=~p; disconnected=~0p; total=~p",
-                        [ClientID, KafkaTopic, P, R, length(DisconnectedLeaders)]
+                        "Failed to get partition count for ~s: ~p; client: ~p",
+                        [KafkaTopic, Reason, ClientID]
                     ),
                     {?status_disconnected, iolist_to_binary(Msg)}
             end;
+        {AliveWorkers, []} ->
+            {Partitions, _WorkerPids} = lists:unzip(AliveWorkers),
+            do_check_leader_connections(ClientID, KafkaTopic, Partitions);
         {_AliveWorkers, DeadWorkers} ->
             DeadPartitions = lists:map(fun({P, _Pid}) -> P end, DeadWorkers),
             Msg = io_lib:format(
@@ -610,6 +603,29 @@ do_get_topic_status(ClientID, KafkaTopic, SubscriberId) ->
             {?status_connecting, iolist_to_binary(Msg)};
         false ->
             {?status_connecting, <<"Subscriber workers restarting">>}
+    end.
+
+do_check_leader_connections(ClientID, KafkaTopic, Partitions) ->
+    DisconnectedLeaders = lists:filtermap(
+        fun(Partition) ->
+            case brod_client:get_leader_connection(ClientID, KafkaTopic, Partition) of
+                {ok, _Conn} ->
+                    false;
+                {error, Reason} ->
+                    {true, {Partition, Reason}}
+            end
+        end,
+        Partitions
+    ),
+    case DisconnectedLeaders of
+        [] ->
+            ?status_connected;
+        [{P, R} | _] ->
+            Msg = io_lib:format(
+                "Partition leader unavailable; client=~s; topic=~s; partition=~p; disconnected=~0p; total=~p",
+                [ClientID, KafkaTopic, P, R, length(DisconnectedLeaders)]
+            ),
+            {?status_disconnected, iolist_to_binary(Msg)}
     end.
 
 %% Returns 'false' if failed to get workers.

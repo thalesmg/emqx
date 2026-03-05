@@ -1039,25 +1039,25 @@ max_heap_size_test_() ->
     Sc = emqx_schema,
     Check = fun(Input) ->
         {ok, Hocon} = hocon:binary(Input),
-        hocon_tconf:check_plain(Sc, Hocon, #{}, [force_shutdown])
+        hocon_tconf:check_plain(Sc, Hocon, #{}, [system, force_shutdown])
     end,
     [
         {"equal to default of 128GB",
             ?_assertMatch(
-                #{<<"force_shutdown">> := #{<<"max_heap_size">> := MaxWords}},
-                Check(<<"force_shutdown.max_heap_size = 128GB">>)
+                #{<<"system">> := #{<<"force_shutdown">> := #{<<"max_heap_size">> := MaxWords}}},
+                Check(<<"system.force_shutdown.max_heap_size = 128GB">>)
             )},
         {"default value",
             ?_assertMatch(
-                #{<<"force_shutdown">> := #{<<"max_heap_size">> := DefaultWords}},
-                Check(<<"force_shutdown.max_heap_size = null">>)
+                #{<<"system">> := #{<<"force_shutdown">> := #{<<"max_heap_size">> := DefaultWords}}},
+                Check(<<"system.force_shutdown.max_heap_size = null">>)
             )},
         {"divides by the wordsize",
             ?_test(begin
                 Expected = 1024 div WordSize,
                 ?assertMatch(
-                    #{<<"force_shutdown">> := #{<<"max_heap_size">> := Expected}},
-                    Check(<<"force_shutdown.max_heap_size = 1KB">>),
+                    #{<<"system">> := #{<<"force_shutdown">> := #{<<"max_heap_size">> := Expected}}},
+                    Check(<<"system.force_shutdown.max_heap_size = 1KB">>),
                     #{expected => Expected}
                 )
             end)},
@@ -1066,11 +1066,11 @@ max_heap_size_test_() ->
                 {emqx_schema, [
                     #{reason := #{cause := max_heap_size_too_large, maximum := MaxBytes}}
                 ]},
-                Check(<<"force_shutdown.max_heap_size = 129GB">>)
+                Check(<<"system.force_shutdown.max_heap_size = 129GB">>)
             )},
         {"0 is allowed",
             ?_assertMatch(
-                #{<<"force_shutdown">> := #{<<"max_heap_size">> := 0}},
-                Check(<<"force_shutdown.max_heap_size = 0KB">>)
+                #{<<"system">> := #{<<"force_shutdown">> := #{<<"max_heap_size">> := 0}}},
+                Check(<<"system.force_shutdown.max_heap_size = 0KB">>)
             )}
     ].

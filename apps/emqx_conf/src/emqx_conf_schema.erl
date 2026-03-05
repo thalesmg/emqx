@@ -125,8 +125,38 @@
 -define(DEFAULT_RPC_PORT, 5369).
 
 %% Callback to upgrade config after loaded from config file but before validation.
-upgrade_raw_conf(Raw) ->
-    emqx_bridge_v2_schema:actions_convert_from_connectors(Raw).
+upgrade_raw_conf(Raw0) ->
+    Raw1 = maybe_move_force_configs_to_system(Raw0),
+    emqx_bridge_v2_schema:actions_convert_from_connectors(Raw1).
+
+maybe_move_force_configs_to_system(Raw0) ->
+    ForceRoots = [<<"force_gc">>, <<"force_shutdown">>],
+    case maps:get(<<"system">>, Raw0, #{}) of
+        System0 when is_map(System0) ->
+            {Raw1, System1, Moved} = lists:foldl(
+                fun(Key, {RawAcc, SystemAcc, MovedAcc}) ->
+                    case maps:take(Key, RawAcc) of
+                        error ->
+                            {RawAcc, SystemAcc, MovedAcc};
+                        {Val, RawAcc1} ->
+                            case maps:is_key(Key, SystemAcc) of
+                                true ->
+                                    {RawAcc1, SystemAcc, true};
+                                false ->
+                                    {RawAcc1, SystemAcc#{Key => Val}, true}
+                            end
+                    end
+                end,
+                {Raw0, System0, false},
+                ForceRoots
+            ),
+            case Moved of
+                true -> Raw1#{<<"system">> => System1};
+                false -> Raw1
+            end;
+        _ ->
+            Raw0
+    end.
 
 namespace() -> emqx.
 

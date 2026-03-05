@@ -18,9 +18,8 @@ roots() ->
         mqtt,
         stats,
         flapping_detect,
-        force_shutdown,
+        system,
         conn_congestion,
-        force_gc,
         overload_protection,
         durable_sessions
     ].

@@ -278,7 +278,7 @@ tune_heap_size(Channel) ->
     case
         emqx_config:get_zone_conf(
             emqx_channel:info(zone, Channel),
-            [force_shutdown]
+            [system, force_shutdown]
         )
     of
         #{enable := false} -> ok;
@@ -292,7 +292,7 @@ get_stats_enable(Zone) ->
     end.
 
 get_force_gc(Zone) ->
-    case emqx_config:get_zone_conf(Zone, [force_gc]) of
+    case emqx_config:get_zone_conf(Zone, [system, force_gc]) of
         #{enable := false} -> undefined;
         GcPolicy -> emqx_gc:init(GcPolicy)
     end.
@@ -524,7 +524,7 @@ run_gc({Cnt, Oct}, State = #state{gc_state = GcSt}) ->
     end.
 
 check_oom(State = #state{zone = Zone}) ->
-    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [force_shutdown]),
+    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [system, force_shutdown]),
     case ShutdownPolicy of
         #{enable := false} ->
             {ok, State};

@@ -78,10 +78,9 @@
     [<<"prometheus">>],
     [<<"crl_cache">>],
     [<<"conn_congestion">>],
-    [<<"force_shutdown">>],
+    [<<"system">>],
     [<<"flapping_detect">>],
     [<<"broker">>],
-    [<<"force_gc">>],
     [<<"zones">>],
     [<<"slow_subs">>],
     [<<"cluster">>, <<"links">>]

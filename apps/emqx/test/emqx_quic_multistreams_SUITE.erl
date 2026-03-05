@@ -165,7 +165,7 @@ restart_emqx(Config) ->
 mk_emqx_spec() ->
     {emqx,
         %% Turn off force_shutdown policy.
-        "force_shutdown.enable = false"
+        "system.force_shutdown.enable = false"
         "\n listeners.quic.default {"
         "\n   enable = true, bind = 14567, acceptors = 16, idle_timeout_ms = 15000, datagram_receive_enabled=true"
         "\n }"}.

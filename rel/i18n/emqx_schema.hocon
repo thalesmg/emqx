@@ -219,6 +219,12 @@ mqtt.desc:
 """Global MQTT configuration.
 The configs here work as default values which can be overridden in <code>zone</code> configs"""
 
+system.desc:
+"""System-level runtime protection configurations."""
+
+system.label:
+"""System"""
+
 crl_cache_refresh_http_timeout.desc:
 """The timeout for the HTTP request when fetching CRLs.  This is a global setting for all listeners."""
 
@@ -1326,8 +1332,8 @@ base_listener_zone.desc: """~
 
     A zone can override the configs under below root names:
     - `mqtt`
-    - `force_shutdown`
-    - `force_gc`
+    - `system.force_shutdown`
+    - `system.force_gc`
     - `flapping_detect`
     - `durable_sessions`"""
 

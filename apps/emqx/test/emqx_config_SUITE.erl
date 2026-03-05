@@ -194,18 +194,17 @@ t_init_load_emqx_schema(Config) when is_list(Config) ->
     MQTT = emqx_config:get([mqtt]),
     Stats = emqx_config:get([stats]),
     FD = emqx_config:get([flapping_detect]),
-    FS = emqx_config:get([force_shutdown]),
+    FS = emqx_config:get([system, force_shutdown]),
     CC = emqx_config:get([conn_congestion]),
-    FG = emqx_config:get([force_gc]),
+    FG = emqx_config:get([system, force_gc]),
     OP = emqx_config:get([overload_protection]),
     ?assertMatch(
         #{
             mqtt := MQTT,
             stats := Stats,
             flapping_detect := FD,
-            force_shutdown := FS,
+            system := #{force_shutdown := FS, force_gc := FG},
             conn_congestion := CC,
-            force_gc := FG,
             overload_protection := OP
         },
         Default
@@ -474,13 +473,15 @@ zone_global_defaults() ->
             #{enable_alarm => false, min_alarm_sustain_duration => 60000},
         flapping_detect =>
             #{ban_time => 300000, max_count => 15, window_time => 60000, enable => false},
-        force_gc =>
-            #{bytes => 16777216, count => 16000, enable => true},
-        force_shutdown =>
+        system =>
             #{
-                enable => true,
-                max_heap_size => 4194304,
-                max_mailbox_size => 1000
+                force_gc => #{bytes => 16777216, count => 16000, enable => true},
+                force_shutdown =>
+                    #{
+                        enable => true,
+                        max_heap_size => 4194304,
+                        max_mailbox_size => 1000
+                    }
             },
         mqtt =>
             #{

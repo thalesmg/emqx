@@ -382,7 +382,7 @@ run_loop(
     Peername = emqx_channel:info(peername, Channel),
     emqx_logger:set_metadata_peername(esockd:format(Peername)),
     proc_lib:set_label({Listener, Peername}),
-    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [force_shutdown]),
+    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [system, force_shutdown]),
     emqx_utils:tune_heap_size(ShutdownPolicy),
     case activate_socket(State) of
         {ok, NState} ->
@@ -1142,7 +1142,7 @@ run_gc(Pubs, Bytes, State = #state{gc_state = GcSt, zone = Zone}) ->
     end.
 
 check_oom(Pubs, Bytes, State = #state{zone = Zone}) ->
-    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [force_shutdown]),
+    ShutdownPolicy = emqx_config:get_zone_conf(Zone, [system, force_shutdown]),
     case emqx_utils:check_oom(ShutdownPolicy) of
         {shutdown, Reason} ->
             %% triggers terminate/2 callback immediately
@@ -1346,7 +1346,7 @@ init_zone_specific_state(Zone, Opts, #state{} = State0) ->
                 end
         end,
     GcState =
-        case emqx_config:get_zone_conf(Zone, [force_gc]) of
+        case emqx_config:get_zone_conf(Zone, [system, force_gc]) of
             #{enable := false} -> undefined;
             GcPolicy -> emqx_gc:init(GcPolicy)
         end,

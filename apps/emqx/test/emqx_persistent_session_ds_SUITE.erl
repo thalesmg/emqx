@@ -1452,7 +1452,7 @@ t_flow_control_no_wrap_around(init, Config) ->
             #{
                 <<"mqtt">> => #{<<"max_inflight">> => 65_535},
                 <<"durable_sessions">> => #{<<"batch_size">> => 1_000_000},
-                <<"force_shutdown">> => #{<<"enable">> => false}
+                <<"system">> => #{<<"force_shutdown">> => #{<<"enable">> => false}}
             }
     },
     start_local(?FUNCTION_NAME, Config, Opts).

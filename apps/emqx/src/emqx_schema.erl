@@ -256,9 +256,9 @@ roots(medium) ->
                 ref("sys_topics"),
                 #{desc => ?DESC(sys_topics)}
             )},
-        {force_shutdown,
+        {system,
             sc(
-                ref("force_shutdown"),
+                ref("system"),
                 #{}
             )},
         {overload_protection,
@@ -278,11 +278,6 @@ roots(medium) ->
     ];
 roots(low) ->
     [
-        {force_gc,
-            sc(
-                ref("force_gc"),
-                #{}
-            )},
         {conn_congestion,
             sc(
                 ref("conn_congestion"),
@@ -398,6 +393,19 @@ fields("authz_cache") ->
     ];
 fields("mqtt") ->
     mqtt_general() ++ mqtt_session() ++ mqtt_limiter();
+fields("system") ->
+    [
+        {force_shutdown,
+            sc(
+                ref("force_shutdown"),
+                #{}
+            )},
+        {force_gc,
+            sc(
+                ref("force_gc"),
+                #{}
+            )}
+    ];
 fields("zone") ->
     emqx_zone_schema:zones_without_default();
 fields("topic_qos_rule") ->
@@ -2234,9 +2242,12 @@ desc("zone") ->
     " - `mqtt.*`\n"
     " - `authorization.*`\n"
     " - `flapping_detect.*`\n"
-    " - `force_shutdown.*`\n"
+    " - `system.force_shutdown.*`\n"
     " - `conn_congestion.*`\n"
-    " - `force_gc.*`\n\n";
+    " - `system.force_gc.*`\n\n";
+desc("system") ->
+    "System-level runtime protection configurations, such as forced shutdown\n"
+    "and forced garbage collection policies.";
 desc("flapping_detect") ->
     "This config controls the allowed maximum number of `CONNECT` packets received\n"
     "from the same clientid in a time frame defined by `window_time`.\n"

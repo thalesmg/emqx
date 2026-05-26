@@ -383,8 +383,15 @@ dump_api(Term = #{api := _, signatures := _, release := Release}) ->
     file:write_file(Filename, io_lib:format("~0p.~n", [Term])).
 
 -spec dump_versions(api_dump()) -> ok.
-dump_versions(APIs) ->
-    Filename = versions_file(),
+dump_versions(APIs0) ->
+    APIsByApp = maps:groups_from_list(
+        fun({API, Vsn}) -> get_application(API, Vsn) end,
+        maps:keys(APIs0)
+    ),
+    maps:foreach(fun dump_versions/2, APIsByApp).
+
+dump_versions(Application, APIVsns) ->
+    Filename = versions_file(Application),
     logger:notice("Dumping API versions to ~p", [Filename]),
     ok = filelib:ensure_dir(Filename),
     {ok, FD} = file:open(Filename, [write]),
@@ -395,7 +402,7 @@ dump_versions(APIs) ->
         fun(API) ->
             ok = io:format(FD, "~p.~n", [API])
         end,
-        lists:sort(maps:keys(APIs))
+        lists:sort(APIVsns)
     ),
     file:close(FD).
 
@@ -472,19 +479,31 @@ dumps_dir() ->
 versions_file() ->
     filename:join(emqx_app_dir(), "priv/bpapi.versions").
 
+versions_file(Application) ->
+    filename:join(app_dir(Application), "priv/bpapi.versions").
+
 emqx_app_dir() ->
+    app_dir(emqx).
+
+app_dir(Application) ->
+    AppStr = atom_to_list(Application),
     Info = ?MODULE:module_info(compile),
     case proplists:get_value(source, Info) of
         Source when is_list(Source) ->
             BPAPIAppDir = filename:dirname(filename:dirname(Source)),
             Root = filename:dirname(filename:dirname(BPAPIAppDir)),
-            filename:join([Root, "apps", "emqx"]);
+            filename:join([Root, "apps", AppStr]);
         undefined ->
-            "apps/emqx"
+            "apps/" ++ AppStr
     end.
 
 project_root_dir() ->
     filename:dirname(filename:dirname(emqx_app_dir())).
+
+get_application(API, Vsn) ->
+    ModStr = atom_to_list(API) ++ "_proto_v" ++ integer_to_list(Vsn),
+    {ok, [App]} = xref:q(?XREF, "(App) " ++ ModStr),
+    App.
 
 -if(?OTP_RELEASE >= 26).
 load_plt(File) ->

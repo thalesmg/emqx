@@ -7,6 +7,7 @@
 -export([
     start/0,
     announce/2,
+    announce_new/2,
     nodes_supporting_bpapi_version/2,
     supported_version/1, supported_version/2,
     supported_apis/1,
@@ -16,7 +17,9 @@
 %% Internal exports (RPC)
 -export([
     announce_fun/1,
-    announce_fun/2
+    announce_fun/2,
+    announce_fun_single_app/2,
+    clear_old_entries_tx/1
 ]).
 
 -export_type([api/0, api_version/0, var_name/0, call/0, rpc/0, bpapi_meta/0]).
@@ -58,7 +61,9 @@ start() ->
         {rlog_shard, ?BPAPI_SHARD}
     ]),
     ok = mria:wait_for_tables([?TAB]),
-    announce(node(), emqx).
+    clear_old_entries(node()),
+    announce_new(node(), emqx),
+    announce_new(node(), emqx_conf).
 
 %% @doc Get maximum version of the backplane API supported by the node
 -spec supported_version(node(), api()) -> api_version() | undefined.
@@ -116,6 +121,19 @@ announce(Node, App) ->
             ok
     end.
 
+-doc """
+Called when starting an application which contains BPAPIs.
+
+Very similar to `announce/2`, but does not remove all existing APIs when called.  Removes
+only those API names contained in the application's versions file.
+""".
+announce_new(Node, App) ->
+    {ok, Data} = file:consult(?MODULE:versions_file(App)),
+    {atomic, ok} = mria:transaction(?BPAPI_SHARD, fun ?MODULE:announce_fun_single_app/2, [
+        Node, Data
+    ]),
+    ok.
+
 -spec versions_file(atom()) -> file:filename_all().
 versions_file(App) ->
     filename:join(code:priv_dir(App), "bpapi.versions").
@@ -144,6 +162,21 @@ announce_fun(Data) ->
 
 -spec announce_fun(node(), [{api(), api_version()}]) -> ok.
 announce_fun(Node, Data) ->
+    clear_old_entries_tx(Node),
+    %% Insert new records:
+    _ = [
+        mnesia:write(#?TAB{key = {Node, API}, version = Version})
+     || {API, Version} <- Data
+    ],
+    %% Update maximum supported version:
+    [update_minimum(API) || {API, _} <- Data],
+    ok.
+
+clear_old_entries(Node) ->
+    {atomic, ok} = mria:transaction(?BPAPI_SHARD, fun ?MODULE:clear_old_entries_tx/1, [Node]),
+    ok.
+
+clear_old_entries_tx(Node) ->
     %% Delete old records, if present:
     MS = ets:fun2ms(fun(#?TAB{key = {N, API}}) when N =:= Node ->
         {N, API}
@@ -152,6 +185,21 @@ announce_fun(Node, Data) ->
     _ = [
         mnesia:delete({?TAB, Key})
      || Key <- OldKeys
+    ],
+    ok.
+
+-spec announce_fun_single_app(node(), [{api(), api_version()}]) -> ok.
+announce_fun_single_app(Node, Data) ->
+    AppAPIs = lists:usort([API || {API, _} <- Data]),
+    %% Delete old records, if present:
+    MS = ets:fun2ms(fun(#?TAB{key = {N, API}}) when N =:= Node ->
+        {N, API}
+    end),
+    OldKeys = mnesia:select(?TAB, MS, write),
+    _ = [
+        mnesia:delete({?TAB, Key})
+     || Key = {_Node, API} <- OldKeys,
+        lists:member(API, AppAPIs)
     ],
     %% Insert new records:
     _ = [

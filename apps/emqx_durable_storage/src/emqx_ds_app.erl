@@ -7,4 +7,6 @@
 -export([start/2]).
 
 start(_Type, _Args) ->
-    emqx_ds_sup:start_link().
+    {ok, Sup} = emqx_ds_sup:start_link(),
+    emqx_bpapi:announce_new(node(), emqx_durable_storage),
+    {ok, Sup}.

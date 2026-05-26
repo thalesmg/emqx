@@ -10,7 +10,9 @@
 
 start(_Type, _Args) ->
     ok = emqx_dsch:register_backend(builtin_raft, emqx_ds_builtin_raft),
-    emqx_ds_builtin_raft_sup:start_top().
+    {ok, Sup} = emqx_ds_builtin_raft_sup:start_top(),
+    emqx_bpapi:announce_new(node(), emqx_ds_builtin_raft),
+    {ok, Sup}.
 
 stop(_) ->
     ok.

@@ -121,10 +121,14 @@
 
 publish(#message{topic = <<"$SYS/", _/binary>>}) ->
     ignore;
-publish(#message{from = From, topic = Topic, payload = Payload}) when
+publish(#message{from = From, topic = Topic, payload = Payload} = Msg) when
     is_binary(From); is_atom(From)
 ->
-    ?TRACE("PUBLISH", "publish_to", #{topic => Topic, payload => Payload}).
+    Ns = resolve_namespace([
+          get_namespace_from_message(Msg),
+          get_namespace_from_proc_metadata()
+    ]),
+    ?TRACE("PUBLISH", "publish_to", #{topic => Topic, payload => Payload, namespace => Ns}).
 
 subscribe(<<"$SYS/", _/binary>>, _SubId, _SubOpts) ->
     ignore;
@@ -877,6 +881,31 @@ filter_cli_handler(Names) ->
 
 now_second() ->
     os:system_time(second).
+
+get_namespace_from_proc_metadata() ->
+    case logger:get_process_metadata() of
+        #{tns := Ns} ->
+            Ns;
+        _ ->
+            undefined
+    end.
+
+get_namespace_from_message(#message{headers = Headers}) ->
+    case Headers of
+        #{client_attrs := #{?CLIENT_ATTR_NAME_TNS := Ns}} ->
+            Ns;
+        _ ->
+            undefined
+    end.
+
+resolve_namespace([?global_ns | _]) ->
+    ?global_ns;
+resolve_namespace([Ns | _]) when is_binary(Ns) ->
+    Ns;
+resolve_namespace([_ | Rest]) ->
+    resolve_namespace(Rest);
+resolve_namespace([]) ->
+    ?global_ns.
 
 %% Tests
 

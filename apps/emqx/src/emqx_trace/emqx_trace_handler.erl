@@ -536,8 +536,11 @@ filter_clientid(_Log, _FilterCtx) ->
     stop.
 
 -spec filter_topic(logger:log_event(), #filterctx{}) -> logger:log_event() | stop.
-filter_topic(#{meta := Meta = #{topic := Topic}} = Log, #filterctx{match = TopicFilter}) ->
-    filter_ret(is_trace(Meta) andalso emqx_topic:match(Topic, TopicFilter), Log);
+filter_topic(#{meta := Meta = #{topic := Topic}} = Log, #filterctx{match = TopicFilter, namespace = Namespace}) ->
+    LogNamespace = maps:get(namespace, Meta, ?global_ns),
+    IsMatch =
+        (LogNamespace =:= Namespace) andalso is_trace(Meta) andalso emqx_topic:match(Topic, TopicFilter),
+    filter_ret(IsMatch, Log);
 filter_topic(_Log, _FilterCtx) ->
     stop.
 

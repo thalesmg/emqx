@@ -53,6 +53,10 @@ get_data_integration(Mode, Opts) ->
     URL = emqx_mgmt_api_test_util:api_path(["prometheus", "data_integration"]),
     get_prometheus(URL, Mode, Opts).
 
+get_namespaced_stats(Mode, Opts) ->
+    URL = emqx_mgmt_api_test_util:api_path(["prometheus", "namespaced_stats"]),
+    get_prometheus(URL, Mode, Opts).
+
 get_prometheus(URL, Mode, Opts) ->
     Ns = maps:get(ns, Opts, undefined),
     OnlyGlobal = maps:get(only_global, Opts, undefined),
@@ -469,6 +473,119 @@ t_namespaced_data_integration(TCConfig) ->
                 ],
                 GetLabels(<<"emqx_rule_enable">>, GlobalNodeRes2)
             ),
+            ok
+        end,
+        ?PROM_DATA_MODES
+    ),
+
+    ok.
+
+-doc """
+Checks that global admins may observe namespaced metrics from all namespaces, and
+namespaced admins only see their own namespace.
+""".
+t_namespaced_stats(TCConfig) ->
+    start_local(?FUNCTION_NAME, TCConfig, #{
+        extra_apps => [
+            emqx_bridge_mqtt,
+            emqx_bridge,
+            emqx_rule_engine,
+            emqx_mt
+        ]
+    }),
+    %% sanity check: auth should be enabled
+    ?assertMatch({401, _}, get_data_integration(?PROM_DATA_MODE__NODE, #{})),
+
+    Ns1 = <<"ns1">>,
+    ok = emqx_mt_config:create_managed_ns(Ns1),
+    Ns2 = <<"ns2">>,
+    ok = emqx_mt_config:create_managed_ns(Ns2),
+
+    Ns1AuthHeader = create_namespaced_user_auth_header(#{
+        params => #{
+            <<"username">> => Ns1,
+            <<"role">> => <<"ns:", Ns1/binary, "::administrator">>
+        }
+    }),
+    Ns2AuthHeader = create_namespaced_user_auth_header(#{
+        params => #{
+            <<"username">> => Ns2,
+            <<"role">> => <<"ns:", Ns2/binary, "::administrator">>
+        }
+    }),
+    GlobalAuthHeader = global_admin_auth_header(),
+
+    GetLabels = fun(Key, Res) -> lists:sort(maps:keys(maps:get(Key, Res))) end,
+
+    lists:foreach(
+        fun(Mode) ->
+            ct:pal("mode ~s", [Mode]),
+
+            %% namespaced admin cannot see other namespaces
+            ?assertMatch(
+                {403, _},
+                get_namespaced_stats(Mode, #{
+                    auth_header => Ns1AuthHeader,
+                    ns => <<"other_ns">>
+                })
+            ),
+
+            %% global admin sees metrics from all namespaces (except global; there's
+            %% another endpoint for that)
+            {200, GlobalNodeRes1} = get_namespaced_stats(Mode, #{
+                auth_header => GlobalAuthHeader
+            }),
+            ?assertMatch(
+                [
+                    #{<<"namespace">> := Ns1},
+                    #{<<"namespace">> := Ns2}
+                ],
+                GetLabels(<<"emqx_bytes_received">>, GlobalNodeRes1)
+            ),
+            %% possible to filter one specific namespace
+            {200, GlobalNodeRes2} = get_namespaced_stats(Mode, #{
+                auth_header => GlobalAuthHeader,
+                ns => Ns2
+            }),
+            ?assertMatch(
+                [
+                    #{<<"namespace">> := Ns2}
+                ],
+                GetLabels(<<"emqx_bytes_received">>, GlobalNodeRes2)
+            ),
+
+            %% namespaced admin can only filter its own namespace
+            {200, NsNodeRes1} = get_namespaced_stats(Mode, #{
+                auth_header => Ns1AuthHeader
+            }),
+            ?assertMatch(
+                [#{<<"namespace">> := Ns1}],
+                GetLabels(<<"emqx_bytes_received">>, NsNodeRes1)
+            ),
+            {200, NsNodeRes2} = get_namespaced_stats(Mode, #{
+                auth_header => Ns1AuthHeader,
+                ns => Ns1
+            }),
+            ?assertMatch(
+                [#{<<"namespace">> := Ns1}],
+                GetLabels(<<"emqx_bytes_received">>, NsNodeRes2)
+            ),
+            ?assertMatch(
+                {403, _},
+                get_namespaced_stats(Mode, #{
+                    auth_header => Ns1AuthHeader,
+                    ns => Ns2
+                })
+            ),
+
+            {200, NsNodeRes3} = get_namespaced_stats(Mode, #{
+                auth_header => Ns2AuthHeader
+            }),
+            ?assertMatch(
+                [#{<<"namespace">> := Ns2}],
+                GetLabels(<<"emqx_bytes_received">>, NsNodeRes3)
+            ),
+
             ok
         end,
         ?PROM_DATA_MODES

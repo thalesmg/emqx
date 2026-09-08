@@ -1,0 +1,8 @@
+emqx_bridge_gcp_pubsub_consumer_grpc_action_schema {
+  source_parameters {
+    label: """GCP PubSub Consumer (gRPC) Source Parameters"""
+    desc:
+    """Set of parameters for the source."""
+  }
+
+}

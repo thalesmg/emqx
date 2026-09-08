@@ -26,7 +26,8 @@ defmodule EMQXBridgeGCPProtos.MixProject do
         generate_server?: false,
         generate_client?: false,
         proto_dirs: [
-          "scripts/protos/google/bigtable/v2"
+          "scripts/protos/google/bigtable/v2",
+          "scripts/protos/google/pubsub/v1"
         ],
         out_dir: "src/generated"
       },

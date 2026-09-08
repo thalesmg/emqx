@@ -18,7 +18,7 @@ fi
 
 for path in api bigtable/v2 rpc type; do
   mkdir -p "$PRIV_DIR/protos/google/$path"
-  cp -r /tmp/googleapis/google/$path/*.proto "$PRIV_DIR/protos/google/$path/"
+  cp -r /tmp/googleapis/google/"$path"/*.proto "$PRIV_DIR/protos/google/$path/"
 done
 
 rm -rf googleapis
